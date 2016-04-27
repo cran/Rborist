@@ -18,103 +18,58 @@
 #ifndef ARBORIST_RESPONSE_H
 #define ARBORIST_RESPONSE_H
 
+#include <vector>
+
 /**
    @brief Methods and members for management of response-related computations.
  */
 class Response {
- protected:
-  static int bagCount;
-  static void Finish(double predInfo[]);
+  const std::vector<double> &y;
+  class Leaf *leaf;
+  class Sample** sampleBlock;
  public:
-  double *y;
-  static int nRow; // Set from Predictor
-  static Response *response;
-  static void FactoryReg(double yNum[], int levelMax);
-  static void FactoryCtg(const int feCtg[], const double feProxy[], int ctgWidth, int levelMax);
-  static void DeFactorySt();
-  virtual void DeFactory() = 0;
-  Response(double _y[]);
-  static int SampleRows(int levelMax);
-  virtual int SampleRows(const int rvRows[]) = 0;
-  virtual double Sum() = 0;
-  virtual void TreeInit() = 0;
-  static void TreeClearSt();
-  virtual void TreeClear() = 0;
-  static void ProduceScores(int leafCount, double scores[]);
-  virtual void Scores(int leafCount, double scores[]) = 0;
-  static void ReFactory(int levelMax);
-  virtual void ReFactorySP(int levelMax) = 0;
-  static void LevelSums(int splitCount);
-  virtual void Sums(int splitCount) = 0;
-  virtual ~Response(){}
-  static double PrebiasSt(int splitIdx);
-  virtual double Prebias(int splitIdx) = 0;
+  Response(const std::vector<double> &_y, std::vector<unsigned int> &leafOrigin, std::vector<class LeafNode> &leafNode, std::vector<class BagRow> &bagRow, std::vector<double> &weight, unsigned int ctgWidth);
+  Response(const std::vector<double> &_y, std::vector<unsigned int> &leafOrigin, std::vector<class LeafNode> &leafNode, std::vector<class BagRow> &bagRow, std::vector<unsigned int> &rank);
+  virtual ~Response();
+
+  const std::vector<double> &Y() {
+    return y;
+  }
+  static class ResponseReg *FactoryReg(const std::vector<double> &yNum, const std::vector<unsigned int> &_row2Rank, std::vector<unsigned int> &_leafOrigin, std::vector<class LeafNode> &_leafNode, std::vector<class BagRow> &bagRow, std::vector<unsigned int> &_rank);
+  static class ResponseCtg *FactoryCtg(const std::vector<unsigned int> &feCtg, const std::vector<double> &feProxy, std::vector<unsigned int> &leafOrigin, std::vector<class LeafNode> &leafNode, std::vector<class BagRow> &bagRow,std::vector<double> &weight, unsigned int ctgWidth);
+
+  class PreTree **BlockTree(const class RowRank *rowRank, unsigned int blockSize);
+  const class BV *TreeBag(unsigned int blockIdx);
+  void LeafReserve(unsigned int leafEst, unsigned int bagEst);
+  void DeBlock(unsigned int blockSize);
+  void Leaves(const std::vector<unsigned int> &leafMap, unsigned int blockIdx, unsigned int tIdx);
+
+  virtual class Sample* Sampler(const class RowRank *rowRank) = 0;
 };
+
 
 /**
    @brief Specialization to regression trees.
  */
 class ResponseReg : public Response {
-  static int *sample2Rank;
+  const std::vector<unsigned int> &row2Rank; // Facilitates rank[] output.
  public:
-  ResponseReg(double _y[]);
+
+  ResponseReg(const std::vector<double> &_y, const std::vector<unsigned int> &_row2Rank, std::vector<unsigned int> &leafOrigin, std::vector<class LeafNode> &leafNode, std::vector<class BagRow> &bagRow, std::vector<unsigned int> &rank);
   ~ResponseReg();
-  static void Factory(double yNum[], int levelMax);
-  static int *row2Rank;
-  static double *yRanked;
-  void Scores(int leafCount, double scores[]);
-  static void PredictOOB(double err[], double predInfo[]);
-  static void PredictOOB(double error[], double quantVec[], int qCells, double qPred[], double predInfo[]);
-  static void GetYRanked(double _yRanked[]);
-  void ReFactorySP(int levelMax);
-  int SampleRows(const int rvRows[]);
-  static void ReFactory();
-  void DeFactory();
-  void TreeInit();
-  double Sum();
-  void TreeClear();
-  void Sums(int splitNext);
-  double Prebias(int splitIdx);
+  class Sample *Sampler(const class RowRank *rowRank);
 };
 
 /**
    @brief Specialization to classification trees.
  */
 class ResponseCtg : public Response {
-  static int ctgWidth;
-  static double *treeJitter; // Helps prevent ties among response scores.
-  static double *ctgSum; // [#splits]:  Re-allocatable
-  static double *sumSquares; // [#splits]:  Re-allocatable
+  const std::vector<unsigned int> &yCtg; // 0-based factor-valued response.
  public:
-  static void Factory(const int feCtg[], const double feProxy[], int ctgWidth, int levelMax);
-  static int *yCtg; // The original factor-valued response.
 
-  ResponseCtg(double yProxy[]);
-  static double Jitter(int row);
-  static void PredictOOB(int *conf, double err[], double predInfo[]);
+  ResponseCtg(const std::vector<unsigned int> &_yCtg, const std::vector<double> &_proxy, std::vector<unsigned int> &leafOrigin, std::vector<LeafNode> &leafNode, std::vector<class BagRow> &bagRow, std::vector<double> &weight, unsigned int ctgWidth);
   ~ResponseCtg();
-  void ReFactorySP(int levelMax);
-  static void Factory(int _yCtg[], int _ctgWidth, int levelMax);
-  static void ReFactory();
-  void DeFactory();
-  void TreeClear();
-  void TreeInit();
-  double Sum();
-  int SampleRows(const int rvRows[]);
-  void Scores(int leafCount, double scores[]);
-
-  double Prebias(int splitIdx);
-  void Sums(int splitNext);
-
-  // Splitting and Prebias methods are the only clients.
-  //
-  static inline double SumSquares(int splitIdx) {
-    return sumSquares[splitIdx];
-  }
-
-  static inline double CtgSum(int splitIdx, int ctg) {
-    return ctgSum[splitIdx * ctgWidth + ctg];
-  }
+  class Sample *Sampler(const class RowRank *rowRank);
 };
 
 #endif

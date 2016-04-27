@@ -1,4 +1,4 @@
-# Copyright (C)  2012-2015   Mark Seligman
+# Copyright (C)  2012-2016   Mark Seligman
 ##
 ## This file is part of ArboristBridgeR.
 ##
@@ -15,86 +15,66 @@
 ## You should have received a copy of the GNU General Public License
 ## along with ArboristBridgeR.  If not, see <http://www.gnu.org/licenses/>.
 
-"predict.Rborist" <- function(object, x, yTest=NULL, quantVec = NULL, ...) {
+"predict.Rborist" <- function(object, newdata, yTest=NULL, quantVec = NULL, quantiles = !is.null(quantVec), qBin = 5000, ctgCensus = "votes", ...) {
   if (!inherits(object, "Rborist"))
     stop("object not of class Rborist")
   if (is.null(object$forest))
-    stop("Insufficient state maintained for prediction")
-  PredictForest(object$forest, x, yTest, quantVec)
-}
-
-PredictForest <- function(forest, x, yTest, quantVec) {
-  if (is.null(forest$predictors))
-    stop("Unset predictors in forest")
-  if (is.null(forest$splitValues))
-    stop("Unset split values in forest")
-  if (is.null(forest$scores))
-    stop("Unset scores in forest")
-  if (is.null(forest$bump))
-    stop("Unset bump table in forest")
-
-  quantiles <- !is.null(forest$quant)
-  if (!quantiles && !is.null(quantVec))
-    stop("Quantile vector given but no quantile state found")
+    stop("Forest state needed for prediction")
+  if (quantiles && is.null(object$leaf))
+    stop("Leaf state needed for quantile")
   if (quantiles && is.null(quantVec))
     quantVec <- DefaultQuantVec()
+
+  PredictForest(object$forest, object$leaf, object$signature, newdata, yTest, quantVec, qBin, ctgCensus)
+}
+
+
+PredictForest <- function(forest, leaf, sigTrain, newdata, yTest, quantVec, qBin, ctgCensus) {
+  if (is.null(forest$forestNode))
+    stop("Forest nodes missing")
+  if (is.null(leaf))
+    stop("Leaf missing")
+  if (is.null(sigTrain))
+    stop("Training signature missing")
+
+  if (!is.null(quantVec)) {
+    if (any(quantVec > 1) || any(quantVec < 0))
+      stop("Quantile range must be within [0,1]")
+    if (any(diff(quantVec) <= 0))
+      stop("Quantile range must be increasing")
+  }
+
+  if (!is.null(yTest) && nrow(newdata) != length(yTest)) {
+    stop("Row counts of data and test vector must match")
+  }
   
   # Checks test data for conformity with training data.
-  PredBlock(x)
+  predBlock <- PredBlock(newdata, sigTrain)
+  if (inherits(leaf, "LeafReg")) {
+    if (is.null(quantVec)) {
+      prediction <- .Call("RcppTestReg", predBlock, forest, leaf, yTest)
+    }
+    else {
+      prediction <- .Call("RcppTestQuant", predBlock, forest, leaf, quantVec, qBin, yTest)
+    }
+  }
+  else if (inherits(leaf, "LeafCtg")) {
+    if (!is.null(quantVec))
+      stop("Quantiles supported for regression case only")
 
-  .Call("RcppReload", forest$predictors, forest$splitValues, forest$scores, forest$bump, forest$origins, forest$facOff, forest$facSplits)
-  if (quantiles)
-    .Call("RcppReloadQuant", forest$quant$qYRanked, forest$quant$qRankOrigin, forest$quant$qRank, forest$quant$qRankCount, forest$quant$qLeafPos, forest$quant$qLeafExtent)
-  
-  if (is.null(forest$ctgWidth)) {
-    y <- numeric(nrow(x))
-    if (!quantiles) {
-      qPred <- NULL
-      .Call("RcppPredictReg", y)
+    if (ctgCensus == "votes") {
+      prediction <- .Call("RcppTestVotes", predBlock, forest, leaf, yTest)
+    }
+    else if (ctgCensus == "prob") {
+      prediction <- .Call("RcppTestProb", predBlock, forest, leaf, yTest)
     }
     else {
-      qPred <- numeric(nrow(x) *length(quantVec))
-      .Call("RcppPredictQuant", quantVec, qPred, y)
-      qPred <- matrix(qPred, nrow(x), length(quantVec), byrow=TRUE)
-    }
-    
-    if (!is.null(yTest))
-      val <- sum((y-yTest)^2) / length(y)
-    else
-      val <- y
-    
-    if (!is.null(qPred)) {
-      if (!is.null(yTest)) {
-        ret <- list(mse = val, quantiles = qPred)
-      }
-      else
-        ret <- list(yPred = y, quantiles = qPred)
-    }
-    else {
-      if (!is.null(yTest)) {
-        ret <- list(mse = val)
-      }
-      else
-        ret <- list(yPred = y)
+      stop(paste("Unrecognized ctgCensus type:  ", ctgCensus))
     }
   }
   else {
-    y <- integer(nrow(x))
-    ctgWidth <- forest$ctgWidth
-    unused <- .Call("RcppPredictCtg", y, ctgWidth)
-    if (is.null(yTest)) {
-      ret <- list(yPred = as.factor(y))
-    }
-    else {
-      conf <- matrix(0L, ctgWidth, ctgWidth)
-      for (i in 1:length(y)) {
-        yActual <- yTest[i]
-        yPred <- y[i]
-        conf[yActual, yPred] <- conf[yActual, yPred] + 1
-      }
-      ret <- list(confusion = conf)
-    }
+    stop("Unsupported leaf type")
   }
 
-  ret
+  prediction
 }

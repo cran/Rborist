@@ -1,4 +1,4 @@
-// Copyright (C)  2012-2016   Mark Seligman
+// Copyright (C)  2012-2016  Mark Seligman
 //
 // This file is part of ArboristBridgeR.
 //
@@ -16,23 +16,21 @@
 // along with ArboristBridgeR.  If not, see <http://www.gnu.org/licenses/>.
 
 /**
-   @file callback.h
+   @file rcppPredblock.h
 
-   @brief Exposes utility functions provided by the front end.
+   @brief C++ class definitions for managing PredBlock object.
 
    @author Mark Seligman
+
  */
 
-#ifndef ARBORIST_CALLBACK_H
-#define ARBORIST_CALLBACK_H
 
-class CallBack {
- public:
-  static void SampleInit(unsigned int _nRow, double _sampleWeight[], bool _withRepl);
-  static void SampleRows(unsigned int nSamp, int out[]);
-  static void QSortI(int ySorted[],  int rank2Row[], int one,  int nRow);
-  static void QSortD(double ySorted[],  int rank2Row[], int one,  int nRow);
-  static void RUnif(int len, double out[]);
-};
+#ifndef ARBORIST_RCPP_PREDBLOCK_H
+#define ARBORIST_RCPP_PREDBLOCK_H
+
+using namespace Rcpp;
+
+void PredblockUnwrap(SEXP sPredBlock, int &_nRow, int &_nPredNum, int &_nPredFac, NumericMatrix &_blockNum, IntegerMatrix &_blockFac);
+void SignatureUnwrap(SEXP sSignature, IntegerVector &_predMap, List &_level);
 
 #endif

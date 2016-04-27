@@ -14,91 +14,134 @@
 
  */
 
-#include "index.h"
+#include "bv.h"
 #include "pretree.h"
-#include "train.h"
-#include "predictor.h"
-#include "response.h"
+#include "forest.h"
+#include "predblock.h"
+#include "samplepred.h"
 
 //#include <iostream>
-//using namespace std;
+using namespace std;
 
-PreTree *PreTree::preTree = 0;
-int PreTree::bitLength = -1;
-int PreTree::ptCount = -1;
-int PreTree::treeHeight = -1;
-int PreTree::levelBase = -1;
-int PreTree::leafCount = -1;
-int PreTree::splitCount = -1;
-int PreTree::treeBitOffset = 0;
-bool *PreTree::treeSplitBits = 0;
-int *PreTree::qOff = 0;
-int *PreTree::qRanks = 0;
-int *PreTree::sample2PT = 0;
 
-// Quantiles can be derived by noting rank population (sCount) at each
-// leaf.  After decision tree walked, leaf rank vectors are summed and
-// the appropriate rank quantiles can be derived by walking the leaf sums
-// in rank order.  Absolute quantiles can then be derived in a single
-// pass using a rank2row mapping for the response.
-//
-// Leaf accumulators are not reused, so there is no need to record
-// sample indices or ranks until the final row has been visited.
-//
 // Records terminal-node information for elements of the next level in the pre-tree.
 // A terminal node may later be converted to non-terminal if found to be splitable.
 // Initializing as terminal by default offers several advantages, such as avoiding
 // the need to revise dangling non-terminals from an earlier level.
 //
 
+unsigned int PreTree::nPred = 0;
+unsigned int PreTree::heightEst = 0;
+
 /**
-   @brief Per-tree initializations.
+   @brief Caches the row count and computes an initial estimate of node count.
 
-   @param _levelMax is the current level-max value.
+   @param _nSamp is the number of samples.
 
-   @param _bagCount is the in-bag size of the current tree.
+   @param _minH is the minimal splitable index node size.
 
    @return void.
  */
-void PreTree::TreeInit(int _levelMax, int _bagCount) {
-  if (ptCount < 0)
-    ptCount = 2 * _levelMax; // Initial size estimate.
+void PreTree::Immutables(unsigned int _nPred, unsigned int _nSamp, unsigned int _minH) {
+  nPred = _nPred;
 
-  preTree = new PreTree[ptCount];
-  sample2PT = new int[_bagCount];
-  for (int i = 0; i < _bagCount; i++) {
-    sample2PT[i] = 0; // Unique root nodes zero.
-  }
-  preTree[0].lhId = -1;
-  levelBase = 0;
-  treeHeight = leafCount = 1;
-
-  // Should be wide enough to hold all factor bits for an entire tree:
-  //    #nodes * width of widest factor.
+  // Static initial estimate of pre-tree heights employs a minimal enclosing
+  // balanced tree.  This is probably naive, given that decision trees
+  // are not generally balanced.
   //
-  if (Predictor::NPredFac() > 0) {
-    bitLength = 2 * _levelMax * Predictor::MaxFacCard();
-    treeSplitBits = BitFactory(bitLength);
+  // In any case, 'heightEst' is re-estimated following construction of the
+  // first PreTree block.  Hence the value is not really immutable.  Nodes
+  // can also be reallocated during the interlevel pass as needed.
+  //
+  unsigned twoL = 1; // 2^level, beginning from level zero (root).
+  while (twoL * _minH < _nSamp) {
+    twoL <<= 1;
   }
+
+  // Terminals plus accumulated nonterminals.
+  heightEst = (twoL << 2); // - 1, for exact count.
 }
+
+
+void PreTree::DeImmutables() {
+  nPred = heightEst = 0;
+}
+
+
+/**
+   @brief Per-tree initializations.
+
+   @param _treeBlock is the number of PreTree initialize.
+
+   @return void.
+ */
+PreTree::PreTree(unsigned int _bagCount) : height(1), leafCount(1), bitEnd(0), bagCount(_bagCount) {
+  sample2PT = new unsigned int[bagCount];
+  for (unsigned int i = 0; i < bagCount; i++) {
+    sample2PT[i] = 0;
+  }
+  nodeCount = heightEst;   // Initial height estimate.
+  nodeVec = new PTNode[nodeCount];
+  nodeVec[0].id = 0; // Root.
+  nodeVec[0].lhId = 0; // Initializes as terminal.
+  info = new double[nPred];
+  for (unsigned int i = 0; i < nPred; i++)
+    info[i] = 0.0;
+  splitBits = BitFactory();
+}
+
+
+/**
+   @brief Sets specified bit in splitting bit vector.
+
+   @param id is the index node for which the LH bit is set.
+
+   @param pos is the bit position beyond to set.
+
+   @return void.
+*/
+void PreTree::LHBit(int idx, unsigned int pos) {
+  splitBits->SetBit(nodeVec[idx].splitVal.offset + pos);
+}
+
+
+/**
+   @brief Refines the height estimate using the actual height of a
+   constructed PreTree.
+
+   @param height is an actual height value.
+
+   @return void.
+ */
+void PreTree::Reserve(unsigned int height) {
+  while (heightEst <= height) // Assigns next power-of-two above 'height'.
+    heightEst <<= 1;
+}
+
+
+/**
+   @brief Allocates a zero-valued bit string for the current (pre)tree.
+
+   @return pointer to allocated vector, possibly zero-length.
+*/
+BV *PreTree::BitFactory() {
+  // Should be wide enough to hold all factor bits for an entire tree:
+  //    estimated #nodes * width of widest factor.
+  return new BV(nodeCount * PBTrain::CardMax());
+}
+
 
 /**
    @brief Per-tree finalizer.
  */
-void PreTree::TreeClear() {
-  if (Predictor::NPredFac() > 0) {
-    delete [] treeSplitBits;
-    treeSplitBits = 0;
-  }
-  delete [] preTree;
+PreTree::~PreTree() {
+  delete [] nodeVec;
   delete [] sample2PT;
-  sample2PT = 0;
-  preTree = 0;
-  levelBase = bitLength = treeHeight = leafCount = -1;
+  delete [] info;
 }
 
 /**
-   @brief Speculatively sets the two offspring slots as terminal lh, rh.
+   @brief Speculatively sets the two offspring slots as terminal lh, rh and changes status of this from terminal to nonterminal.
 
    @param _parId is the pretree index of the parent.
 
@@ -108,16 +151,20 @@ void PreTree::TreeClear() {
 
    @return void, with output reference parameters.
 */
-void PreTree::TerminalOffspring(int _parId, int &ptLH, int &ptRH) {
-  ptLH = treeHeight++;
-  preTree[_parId].lhId = ptLH;
-  preTree[ptLH].lhId = -1;
+void PreTree::TerminalOffspring(unsigned int _parId, unsigned int &ptLH, unsigned int &ptRH) {
+  ptLH = height++;
+  nodeVec[_parId].lhId = ptLH;
+  nodeVec[ptLH].id = ptLH;
+  nodeVec[ptLH].lhId = 0;
 
-  ptRH = treeHeight++;
-  preTree[ptRH].lhId = -1;
+  ptRH = height++;
+  nodeVec[ptRH].id = ptRH;
+  nodeVec[ptRH].lhId = 0;
 
-  leafCount += 2;
+  // Two more leaves for offspring, one fewer for this.
+  leafCount++;
 }
+
 
 /**
    @brief Fills in some fields for (generic) node found splitable.
@@ -126,164 +173,177 @@ void PreTree::TerminalOffspring(int _parId, int &ptLH, int &ptRH) {
 
    @param _info is the information content.
 
-   @param _splitVal is the splitting value.
-
    @param _predIdx is the splitting predictor index.
 
    @return void.
 */
-void PreTree::NonTerminalGeneric(int _id, double _info, double _splitVal, int _predIdx) {
-  PreTree *ptS = &preTree[_id];
+void PreTree::NonTerminalFac(double _info, unsigned int _predIdx, unsigned int _id, unsigned int &ptLH, unsigned int &ptRH) {
+  TerminalOffspring(_id, ptLH, ptRH);
+  PTNode *ptS = &nodeVec[_id];
   ptS->predIdx = _predIdx;
-  ptS->info = _info;
-  ptS->splitVal = _splitVal;
-  leafCount--;
+  info[_predIdx] += _info;
+  ptS->splitVal.offset = bitEnd;
+  bitEnd += PBTrain::FacCard(_predIdx);
 }
 
+
 /**
-   @brief Updates the high watermark for the preTree vector.  Forces a reallocation to
-   twice the existing size, if necessary.
+   @brief Finalizes numeric-valued nonterminal.
 
-   N.B.:  reallocations incur considerable resynchronization costs if precipitated
-   from the coprocessor.
+   @param _info is the splitting information content.
 
-   @param splitNext is the count of split nodes in the next level.
+   @param _predIdx is the splitting predictor index.
 
-   @param leafNext is the count of leaf nodes in the next level.
+   @param _id is the node index.
+
+   @return void.
+*/
+void PreTree::NonTerminalNum(double _info, unsigned int _predIdx, unsigned int _rkLow, unsigned int _rkHigh, unsigned int _id, unsigned int &ptLH, unsigned int &ptRH) {
+  TerminalOffspring(_id, ptLH, ptRH);
+  PTNode *ptS = &nodeVec[_id];
+  ptS->predIdx = _predIdx;
+  ptS->splitVal.rkMean = 0.5 * (double(_rkLow) + double(_rkHigh));
+  info[_predIdx] += _info;
+}
+
+
+double PreTree::Replay(SamplePred *samplePred, unsigned int predIdx, int level, int start, int end, unsigned int ptId) {
+  return samplePred->Replay(sample2PT, predIdx, level, start, end, ptId);
+}
+
+
+/**
+   @brief Updates the high watermark for the preTree vector.  Forces a
+   reallocation to twice the existing size, if necessary.
+
+   N.B.:  reallocations incur considerable resynchronization costs if
+   precipitated from the coprocessor.
+
+   @param splitNext is the count of splits in the upcoming level.
+
+   @param leafNext is the count of leaves in the upcoming level.
 
    @return void.
 */
 void PreTree::CheckStorage(int splitNext, int leafNext) {
-  if (treeHeight + splitNext + leafNext > ptCount)
-    ReFactory();
-  if (Predictor::NPredFac() > 0) {
-    if (treeBitOffset + splitNext * Predictor::MaxFacCard() > bitLength)
-      ReBits();
+  if (height + splitNext + leafNext > nodeCount) {
+    ReNodes();
+  }
+
+  unsigned int bitMin = bitEnd + splitNext * PBTrain::CardMax();
+  if (bitMin > 0) {
+    splitBits = splitBits->Resize(bitMin);
   }
 }
+
 
 /**
  @brief Guestimates safe height by doubling high watermark.
 
  @return void.
 */
-void PreTree::ReFactory() {
-  ptCount <<= 1;
-  PreTree *PTtemp = new PreTree[ptCount];
-  for (int i = 0; i < treeHeight; i++)
-    PTtemp[i] = preTree[i];
+void PreTree::ReNodes() {
+  nodeCount <<= 1;
+  PTNode *PTtemp = new PTNode[nodeCount];
+  for (int i = 0; i < height; i++)
+    PTtemp[i] = nodeVec[i];
 
-  delete [] preTree;
-  preTree = PTtemp;
+  delete [] nodeVec;
+  nodeVec = PTtemp;
 }
 
-/**
- @brief Tree split bits accumulate, so data must be copied on realloc.
 
- @return void.
+/**
+  @brief Consumes all pretree nonterminal information into crescent decision forest.
+
+  @param forest grows by producing nodes and splits consumed from pre-tree.
+
+  @param tIdx is the index of the tree being consumed/produced.
+
+  @param predInfo accumulates the information contribution of each predictor.
+
+  @return void, with side-effected forest.
 */
-void PreTree::ReBits() {
-  bitLength <<= 1;
-  bool *TStemp = BitFactory(bitLength);
-  for (int i = 0; i < treeBitOffset; i++)
-    TStemp[i] = treeSplitBits[i];
-  delete [] treeSplitBits;
-  treeSplitBits = TStemp;
+const std::vector<unsigned int> PreTree::DecTree(Forest *forest, unsigned int tIdx, double predInfo[]) {
+  forest->Origins(tIdx);
+  forest->NodeInit(height);
+  NodeConsume(forest, tIdx);
+  forest->BitProduce(splitBits, bitEnd);
+  delete splitBits;
+
+  for (unsigned int i = 0; i < nPred; i++)
+    predInfo[i] += info[i];
+
+  return FrontierToLeaf(forest, tIdx);
 }
 
+
 /**
-   @brief Sets specified bit value to true.  Assumes initialized false.
+   @brief Consumes nonterminal information into the dual-use vectors needed by the decision tree.  Leaf information is post-assigned by the response-dependent Sample methods.
 
-   @param pos is the position beyond the current offset at which to set.
+   @param forest inputs/outputs the updated forest.
 
-   @return void.
+   @return void, with output reference parameter.
 */
-void PreTree::SingleBit(int pos) {
-  //cout << "\t" << treeBitOffset << " + " << pos << endl;
-  treeSplitBits[treeBitOffset + pos] = true;
+void PreTree::NodeConsume(Forest *forest, unsigned int tIdx) {
+  for (int idx = 0; idx < height; idx++) {
+    nodeVec[idx].Consume(forest, tIdx);
+  }
 }
 
+
 /**
-   @brief Nonterminal registration for factor-valued predictor.
+   @brief Consumes the node fields of nonterminals (splits).
 
-   @param treeId is the pretree index.
+   @param forest outputs the growing forest node vector.
 
-   @param info is the information content.
+   @param tIdx is the index of the tree being produced.
 
-   @param predIdx is the splitting predictor index.
-
-   @return void.
+   @return void, with side-effected Forest.
  */
-void PreTree::NonTerminalFac(int treeId, double info, int predIdx) {
-  double sval = treeBitOffset;
-  treeBitOffset += Predictor::FacCard(predIdx);
-  NonTerminalGeneric(treeId, info, sval, predIdx);
+void PTNode::Consume(Forest *forest, unsigned int tIdx) {
+  if (lhId > 0) { // i.e., nonterminal
+    forest->NonterminalProduce(tIdx, id, predIdx, lhId - id, PredBlock::IsFactor(predIdx) ? splitVal.offset : splitVal.rkMean);
+  }
 }
 
 
 /**
-  @brief Writes factor bits from all levels into contiguous vector and resets bit state.
-  @param outBits outputs the split-value bit vector.
+   @brief Copies frontier map, but replaces node indices with indices of
+   corresponding leaves.  Also sets terminal forest nodes.
+
+   @param tIdx is the index of the tree being produced.
+
+   @return Pointer to rewritten map, with side-effected Forest.
+ */
+const std::vector<unsigned int> PreTree::FrontierToLeaf(Forest *forest, unsigned int tIdx) {
+  // Initializes with unattainable leaf-index value.
+  std::vector<unsigned int> nodeLeaf(height);
+  std::fill(nodeLeaf.begin(), nodeLeaf.end(), leafCount);
+
+  std::vector<unsigned int> frontierMap(bagCount);
+  unsigned int leafIdx = 0;
+  for (unsigned int sIdx = 0; sIdx < bagCount; sIdx++) {
+    unsigned int ptIdx = sample2PT[sIdx];
+    if (nodeLeaf[ptIdx] == leafCount) { // Unseen so far.
+      unsigned int nodeIdx = sample2PT[sIdx];
+      forest->LeafProduce(tIdx, nodeIdx, leafIdx);
+      nodeLeaf[ptIdx] = leafIdx++;
+    }
+    frontierMap[sIdx] = nodeLeaf[ptIdx];
+  }
+  //  if (leafCount != leafIdx)
+  //cout << "Leaf count mismatch at frontier" << endl;
   
-  @return void, with output vector parameter.
-*/
-//
-// N.B.:  Should not be called unless FacWidth() > 0.
-//
-void PreTree::ConsumeSplitBits(int outBits[]) {
-  for (int i = 0; i < treeBitOffset; i++) {
-    outBits[i] = treeSplitBits[i]; // Upconverts to integer type for output to front end.
-  }
-  delete [] treeSplitBits;
-  treeSplitBits = 0;
-  treeBitOffset = 0;
+  return frontierMap;
 }
 
 
 /**
-   @brief Consumes pretree nodes into the vectors needed by the decision tree.
-
-   @param leafPred is a reserved predictor index denoting a leaf.
-
-   @param predVec outputs the splitting predictors.
-
-   @param splitVec outputs the splitting values.
-
-   @param bumpVec outputs the left-hand node increment.
-
-   @param scoreVec outputs the scores of terminals.
-
-   @return tree size equal to the maximum offset filled in, also output parameter vectors.
-*/
-// Assigns a breadth-first numbering to minimize branching deltas.
-//
-void PreTree::ConsumeNodes(int leafPred, int predVec[], double splitVec[], int bumpVec[], double scoreVec[]) {
-  Response::ProduceScores(treeHeight, scoreVec);
-  for (int idx = 0; idx < treeHeight; idx++) {
-      if (IsNT(idx)) { // Consumes splits.
-	PreTree ptNode = preTree[idx];
-	predVec[idx] = ptNode.predIdx;
-	splitVec[idx] = ptNode.splitVal;
-	bumpVec[idx] = ptNode.lhId - idx;
-      }
-      else { // Consumes leaves.
-	predVec[idx] = leafPred;
-      }
-  }
+   @return BV-aligned length of used portion of split vector.
+ */
+unsigned int PreTree::BitWidth() {
+  return BV::SlotAlign(bitEnd);
 }
 
-/**
- @brief Maps sample index to pretree index.  Same as Sample2PT(), but asserts terminality.
- @see Sample2PT.
- 
- @param sIdx is the index of a sample
 
- @return pretree index.
-*/
-int PreTree::Sample2Leaf(int sIdx) {
-  int leafIdx = Sample2PT(sIdx);
-  //if (IsNT(leafIdx)) // ASSERTION
-      //cout << "Unexpected non-terminal:  " << leafIdx << endl;
-
-  return leafIdx;
-}

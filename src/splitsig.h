@@ -16,22 +16,74 @@
 #ifndef ARBORIST_SPLITSIG_H
 #define ARBORIST_SPLITSIG_H
 
-#include "predictor.h"
+/**
+   @brief SSNode records sample, index and information content for a
+   potential split at a given split/predictor pair.
+
+ */
+class SSNode {  
+  double NonTerminalRun(class SamplePred *samplePred, class PreTree *preTree, class Run *run, int level, int start, int end, unsigned int ptId, unsigned int &ptLH, unsigned int &ptRH);
+  double NonTerminalNum(class SamplePred *samplePred, class PreTree *preTree, int level, int start, int end, unsigned int ptId, unsigned int &ptLH, unsigned int &ptRH);
+ public:
+  SSNode();
+  int runId; // Index into RunSet list.
+  unsigned int predIdx; // Rederivable, but convenient to cache.
+  unsigned int sCount; // # samples subsumed by split LHS.
+  unsigned int lhIdxCount; // Index count of split LHS.
+  double info; // Information content of split.
+
+  static double minRatio;
+  
+  // Ideally, there would be SplitSigFac and SplitSigNum subclasses, with
+  // Replay() and NonTerminal() methods implemented virtually.  Coprocessor
+  // may not support virtual invocation, however, so we opt for a less
+  // elegant solution.
+
+  /**
+   @brief Derives an information threshold.
+
+   @return information threshold
+  */
+  double inline MinInfo() {
+    return minRatio * info;
+  }
+
+  
+  /**
+     @brief Accessor for bipartitioning.
+
+     @param _lhSCount outputs the number of samples in LHS.
+
+     @param _lhIdxCount outputs the number of indices in LHS.
+
+     @return void, with output reference parameters.
+   */  
+  void inline LHSizes(unsigned int &_lhSCount, unsigned int &_lhIdxCount) {
+    _lhSCount = sCount;
+    _lhIdxCount = lhIdxCount;
+  }
+
+  double NonTerminal(class SamplePred *samplePred, class PreTree *preTree, class SplitPred *splitPred, int level, int start, int end, unsigned int ptId, unsigned int &ptL, unsigned int &ptR);
+};
+
 
 /**
- @brief Split signatures transfer splitting information to inter-level mediation.
+  @brief SplitSigs manage the SSNodes for a given level instantation.
 */
-
 class SplitSig {
-  static int nPred;
-  static SplitSig *levelSS; // The SplitSig records available for the current level.
-  // Returns pointer to SplitSig in the level workspace.  SplitSigs are stored
-  // with predictors as the fastest-varying index.  If no predictor index is passed,
-  // then the vector based at 'splitIdx' is returned.
-  //
+  int splitCount;
+  SSNode *levelSS; // Workspace records for the current level.
  protected:
+  static unsigned int nPred;
+
   /**
      @brief Looks up the SplitSig associated with a given pair.
+
+     SplitSigs are stored with split number as the fastest-varying
+     index.  The likelihood of false sharing during splitting is
+     fairly low, given that predictor selection is probabalistic
+     and splitting workloads themselves are nonuniform.  Nonetheless,
+     predictor-specific references are kept fairly far apart.
 
      @param splitIdx is the split index.
 
@@ -39,124 +91,18 @@ class SplitSig {
 
      @return pointer to looked-up SplitSig.
    */
-  static inline SplitSig *Lookup(int splitIdx, int predIdx = 0) {
-    return levelSS + splitIdx * nPred + predIdx;
+  inline SSNode &Lookup(int splitIdx, unsigned int predIdx = 0) {
+    return levelSS[predIdx * splitCount + splitIdx];
   }
 
  public:
-  int level;  // Most recent level at which this record was stamped.
-  int predIdx; // Helpful, but necessary, for example, if reusing records.
-  int sCount; // # samples subsumed by split LHS.
-  int lhIdxCount; // Index count of split LHS.
-  double info; // Information content of split.
+  SSNode *ArgMax(int splitIdx, double minInfo) const;
+  static void Immutables(unsigned int _nPred, double _minRatio);
+  static void DeImmutables();
 
-  // 'fac' information guides unpacking of LH the bit set for factor-valued
-  // splitting predictors.
-  //
-  // Ideally, there would be SplitSigFac and SplitSigNum subclasses, with
-  // Replay() and NonTerminal() methods implemented virtually.  Coprocessors
-  // do not support vitual invocation, however, so we opt for a less
-  // elegant solution.
-  //
-  struct {
-      int bitOff; // Starting bit offset in pretree.
-      int lhTop; // Reference for unpacking.
-  } fac;
-
-  static void TreeInit(int _levelMax);
-  static void Factory(int _levelMax, int _nPred);
-  static void ReFactory(int _levelMax);
-  static void DeFactory();
-  static SplitSig* ArgMax(int splitIdx, int _level, double preBias, double minInfo);
-  double MinInfo();
-
-  void LHSizes(int &_lhSCount, int &_lhIdxCount) {
-    _lhSCount = sCount;
-    _lhIdxCount = lhIdxCount;
-  }
-
-  double Replay(int splitIdx, int ptL, int ptR);
-
-  /**
-     @brief Sets splitting fields for a numerical predictor.
-
-     @param splitIdx is the index node index.
-
-     @param _predIdx is the predictor index.
-
-     @param _level is the current level.
-
-     @param _sCount is the count of samples in the LHS.
-
-     @param _lhIdxCount is count of indices associated with the LHS.
-
-     @param _info is the splitting information value, currently Gini.
-
-     @return void.
-   */
-  static inline void WriteNum(int splitIdx, int _predIdx, int _level, int _sCount, int _lhIdxCount, double _info) {
-    SplitSig *ssn = Lookup(splitIdx, _predIdx);
-    ssn->level = _level;
-    ssn->sCount = _sCount;
-    ssn->lhIdxCount = _lhIdxCount;
-    ssn->info = _info;
-  }
-  void NonTerminalNum(int level, int lhStart, int ptId);
-
-  // Count and ordinal offset only needed until lowering, at which time the bits
-  // for the LHS are set in a temporary vector for the level at hand.
-  //
-  void NonTerminalFac(int splitIdx, int ptId);
-
-  /**
-     @brief Sets splitting fields for a factor-value predictor.
-
-     @param splitIdx is the index node index.
-
-     @param _predIdx is the predictor index.
-
-     @param _level is the current level.
-
-     @param _sCount is the count of samples in the LHS.
-
-     @param _lhIdxCount is count of indices associated with the LHS.
-
-     @param _info is the splitting information value, currently Gini.
-
-     @param _lhTop is the index of the highest sorted LHS rank.
-
-     @return void.
-   */
-  static inline void WriteFac(int splitIdx, int _predIdx, int _level, int _sCount, int _lhIdxCount, double _info, int _lhTop) {
-    SplitSig *ssf = Lookup(splitIdx, _predIdx);
-    ssf->level = _level;
-    ssf->sCount = _sCount;
-    ssf->lhIdxCount = _lhIdxCount;
-    ssf->info = _info;
-    ssf->fac.lhTop = _lhTop;
-  }
-
-  /**
-     @brief Dispatches nonterminal method based on predictor type.
-
-     @param splitIdx is the index node index.
-
-     @param level is the current level.
-
-     @param ptId is the pretree index.
-
-     @param lhStart is the start index of the LHS.
-
-     @return void.
-
-     Sacrifices elegance for efficiency, as virtual calls are not supported on coprocessor.
-  */
-  inline void NonTerminal(int splitIdx, int level, int ptId, int lhStart) {
-    if (Predictor::FacIdx(predIdx) >= 0)
-      NonTerminalFac(splitIdx, ptId);
-    else
-      NonTerminalNum(level, lhStart, ptId);
-  }
+  void LevelInit(int splitCount);
+  void LevelClear();
+  void Write(const class SPPair *_spPair, unsigned int _sCount, unsigned int _lhIdxCount, double _info);
 };
 
 #endif

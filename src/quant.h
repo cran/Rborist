@@ -16,43 +16,35 @@
 
 #ifndef ARBORIST_QUANT_H
 #define ARBORIST_QUANT_H
+
+#include <vector>
+
+
 /**
  @brief Quantile signature.
 */
 class Quant {
-  static int nTree;
-  static int nRow;
-  static bool live;
+  const class PredictReg *predictReg;
+  const class LeafReg *leafReg;
+  const std::vector<double> &yRanked;
+  const std::vector<double> &qVec;
+  std::vector<unsigned int> sampleOffset;
+  const unsigned int qCount;
+  unsigned int logSmudge;
+  unsigned int binSize;
+  unsigned int *sCountSmudge;
 
-  // Per-tree quantile vectors.
-  static int *treeQRankWidth;
-  static int **treeQLeafPos;
-  static int **treeQLeafExtent;
-  static int **treeQRank;
-  static int **treeQRankCount;
-
-  static int totBagCount; // Internally-maintained copy.
-  static int forestSize; // " " 
-  static double *qYRankedForest;
-  static int qYLenForest; // Length of training response.
-  static int *qRankOriginForest;
-  static int *qRankForest;
-  static int *qRankCountForest;
-  static int *qLeafPosForest;
-  static int *qLeafExtentForest;
-  static void Leaves(const int treeOriginForest[], const int leaves[], double qRow[]);
+  int *leafPos;
+  
+  unsigned int BinSize(unsigned int nRow, unsigned int qBin, unsigned int &_logSmudge);
+  void SmudgeLeaves();
+  void Leaves(unsigned int rowBlock, double qRow[]);
+  unsigned int RanksExact(unsigned int tIdx, unsigned int leafIdx, unsigned int sampRanks[]);
+  unsigned int RanksSmudge(unsigned int tIdx, unsigned int LeafIdx, unsigned int sampRanks[]);
  public:
-  static void FactoryTrain(int _nRow, int _nTree, bool _train);
-  static void FactoryPredict(int _nTree, double qYRanked[], int qYLen, int qRank[], int qRankOrigin[], int qRankCount[], int qLeafPos[], int qLeafExtent[]);
-  static void EntryPredict(double _qVec[], int _qCount, double _qPred[], int _nRow = 0);
-  static void DeFactoryPredict();
-  static void ConsumeTrees(const int treeOriginForest[], int forestSize);
-  static void TreeRanks(int tn, int treeSize, int bagCount);
-  static void Write(double rQYRanked[], int rQRankOrigin[], int rQRank[], int rQRankCount[], int rQLeafPos[], int rQLeafExtent[]);
-  static void PredictRows(const int treeOriginForest[], int *predictLeaves);
-  static int qCount;
-  static double *qVec;
-  static double *qPred;
+  Quant(const class PredictReg *_predictReg, const class LeafReg *_leafReg, const std::vector<double> &_yRanked, const std::vector<double> &_qVec, unsigned int qBin);
+  ~Quant();
+  void PredictAcross(unsigned int rowStart, unsigned int rowEnd, double qPred[]);
 };
 
 #endif

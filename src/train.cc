@@ -11,194 +11,242 @@
    @brief Main entry from front end for training.
 
    @author Mark Seligman
- */
+*/
 
-#include "dectree.h"
-#include "quant.h"
 #include "sample.h"
 #include "train.h"
-#include "predictor.h"
-#include "dectree.h"
+#include "forest.h"
+#include "rowrank.h"
+#include "predblock.h"
 #include "index.h"
-#include "response.h"
+#include "pretree.h"
+#include "sample.h"
+#include "samplepred.h"
 #include "splitsig.h"
-#include "callback.h"
-#include "math.h"
+#include "response.h"
+#include "restage.h"
+#include "splitpred.h"
+#include "run.h"
+#include "leaf.h"
 
 // Testing only:
 //#include <iostream>
 using namespace std;
 
-
-int Train::accumRealloc = -1;
-int Train::probResize = -1;
-int Train::nTree = -1;
-int Train::levelMax = -1;
-double Train::minRatio = 0.0;
-int Train::blockSize = -1;
-int *Train::cdfOff = 0;
-double *Train::sCDF = 0;
-int Train::reLevel = 0;
+int Train::trainBlock = 0;
+unsigned int Train::nTree = 0;
+unsigned int Train::nRow = 0;
+int Train::nPred = 0;
 
 /**
-   @brief Singleton factory:  everything is static.
+   @brief Initializes immutable values for "top-level" classes directly,
+   for those instances in which static initialization seems to make
+   more sense.  These may, in turn, initialize subclasses or classes
+   with objects strictly local to them.
 
-   @param _nTree is the requested number of trees.
+   @param minNode is the minimal index node size on which to split.
 
-   @param _minRatio is a threshold ratio for determining whether to split.
-
-   @param _blockSize is a predictor-blocking heuristic for parallel implementations.
-
-   @return level-max value.
-*/
-int Train::Factory(int _nTree, double _minRatio, int _blockSize) {
-  nTree = _nTree;
-  blockSize = _blockSize;
-  minRatio = _minRatio;
-  accumRealloc = 0;
-  probResize = 0;
-
-  // Employs heuristics to determine suitable vector sizes for level-based
-  // operations.
-  //
-  unsigned twoL = 1; // 2^ #(levels-1)
-  unsigned uN = Sample::NSamp();
-  int balancedDepth = 1;
-  while (twoL <= uN) { // Next power of two greater than 'nSamp'.
-    balancedDepth++;
-    twoL <<= 1;
-  }
-
-  // There could be as many as (bagCount - 1)/2 levels, in the case of a completely
-  // left- or right-leaning tree.
-  //
-  // Two greater than balanced tree height is empirically well-suited to regression
-  // trees.  Categorical trees may require "unlimited" depth.
-  //
-  levelMax = 1 << (accumExp >= (balancedDepth - 5) ? accumExp : balancedDepth - 5);
-
-  return levelMax;
-}
-
-
-/**
-   @brief Determines next level-max value.
-
-   @return next level-max value.
-   Employs the old reallocation heuristic of doubling the high watermark.
-   This also happens to be safe, as there cannot be more than twice as
-   many splits in the next level.
-
-   N.B.:  Assumes trees trained sequentially, so that newer 'levelMax' values
-   can be employed by later trees.  If trees are trained in parallel, then
-   a guard must be employed to prevent unnecessary reallocation.
- */
-int Train::ReFactory() {
-  reLevel++;
-  levelMax <<= 1;
-
-  return levelMax;
-}
-
-/**
-   @brief Finalizer.
-*/
-void Train::DeFactory() {
-  if (cdfOff != 0) {
-    delete [] cdfOff;
-    delete [] sCDF;
-    cdfOff = 0;
-    sCDF = 0;
-  }
-  reLevel = 0;
-}
-
-/**
-   @brief Main entry for training after singleton factory.
-
-   @param minH is the minimal index node size on which to split.
-
-   @param _quantiles is true iff quantiles have been requested.
-
-   @param facWidth outputs the sum of factor cardinalities.
-
-   @param totBagCount outputs the sum of all tree in-bag sizes.
+   @param minRatio is a threshold ratio for determining whether to split.
 
    @param totLevels, if positive, limits the number of levels to build.
 
    @return void.
 */
-int Train::Training(int minH, bool _quantiles, int totLevels, int &facWidth, int &totBagCount) {
-  totBagCount = 0;
-  SplitSig::Factory(levelMax, Predictor::NPred());
-  IndexNode::Factory(minH, totLevels);
-  DecTree::FactoryTrain(nTree, Predictor::NRow(), Predictor::NPred(), Predictor::NPredNum(), Predictor::NPredFac());
-  Quant::FactoryTrain(Predictor::NRow(), nTree, _quantiles);
-  for (int tn = 0; tn < nTree; tn++) {
-    int bagCount = Response::SampleRows(levelMax);
-    int treeSize = IndexNode::Levels();
-    DecTree::ConsumePretree(Sample::inBag, bagCount, treeSize, tn);
-    Response::TreeClearSt();
-    totBagCount += bagCount;
-  }
-  int forestHeight = DecTree::ConsumeTrees(facWidth);
-
-  DeFactory();
-  Sample::DeFactory();
-  SplitSig::DeFactory();
-  IndexNode::DeFactory();
-  Predictor::DeFactory(); // Dispenses with training clone of 'x'.
-
-  return forestHeight;
+void Train::Init(double *_feNum, int _facCard[], int _cardMax, int _nPredNum, int _nPredFac, int _nRow, int _nTree, int _nSamp, double _feSampleWeight[], bool _withRepl, int _trainBlock, int _minNode, double _minRatio, int _totLevels, int _ctgWidth, int _predFixed, double _predProb[], double _regMono[]) {
+  nTree = _nTree;
+  nRow = _nRow;
+  nPred = _nPredNum + _nPredFac;
+  trainBlock = _trainBlock;
+  PBTrain::Immutables(_feNum, _facCard, _cardMax, _nPredNum, _nPredFac, nRow);
+  Sample::Immutables(nRow, nPred, _nSamp, _feSampleWeight, _withRepl, _ctgWidth, nTree);
+  SPNode::Immutables(_ctgWidth);
+  SplitSig::Immutables(nPred, _minRatio);
+  Index::Immutables(_minNode, _totLevels);
+  PreTree::Immutables(nPred, _nSamp, _minNode);
+  RestageMap::Immutables(nPred);
+  SplitPred::Immutables(nPred, _ctgWidth, _predFixed, _predProb, _regMono);
+  Run::Immutables(nPred, _ctgWidth);
 }
 
-/**
-   @brief Writes decision forest to storage provided by front end.
-
-   @rPreds outputs splitting predictors.
-
-   @rSplits outputs splitting values.
-
-   @rScores outputs leaf scores.
-
-   @rBump outputs branch increments.
-
-   @rOrigins outputs offsets of individual trees.
-
-   @rFacOff outputs offsets of spitting bit vectors.
-
-   @rFacSplits outputs factor splitting bit vectors.
-
-   @return void, with output parameter vectors.
- */
-void Train::WriteForest(int *rPreds, double *rSplits, double * rScores, int *rBump, int *rOrigins, int *rFacOff, int * rFacSplits) {
-  DecTree::WriteForest(rPreds, rSplits, rScores, rBump, rOrigins, rFacOff, rFacSplits);
-
-  // Dispenses with second load of predictor data (BlockData()).  Only client this late
-  // appears to be use of 'nPredFac' to indicate presence of factor predictors.  Substitution
-  // with an alternate indicator could allow this deallocation to be hoisted to the
-  // Finish method for prediction.
-  //
-  Predictor::DeFactory();
-}
 
 /**
-   @brief Writes quantile information to storage provided by front end.
+   @brief Unsets immutables.
 
-   @rQYRanked outputs the ranked response values.
-
-   @rQRankOrigins outputs the leaf offsets for the start of each tree.
-
-   @rQRank outputs the quantile ranks.
-
-   @rQRankCount outputs the count of quantile ranks.
-
-   @rQLeafPos outputs the quantile leaf positions.
-
-   @rQLeafExtent outputs the quantile leaf sizes.
-
-   @return void, with output parameter vectors.
+   @return void.
 */
-void Train::WriteQuantile(double rQYRanked[], int rQRankOrigin[], int rQRank[], int rQRankCount[], int rQLeafPos[], int rQLeafExtent[]) {
-  Quant::Write(rQYRanked, rQRankOrigin, rQRank, rQRankCount, rQLeafPos, rQLeafExtent);
+void Train::DeImmutables() {
+  nTree = nRow = nPred = trainBlock = 0;
+  PBTrain::DeImmutables();
+  SplitSig::DeImmutables();
+  Index::DeImmutables();
+  PreTree::DeImmutables();
+  Sample::DeImmutables();
+  SPNode::DeImmutables();
+  SplitPred::DeImmutables();
+  Run::DeImmutables();
 }
+
+
+/**
+   @brief Regression constructor.
+ */
+Train::Train(const std::vector<double> &_y, const std::vector<unsigned int> &_row2Rank, std::vector<unsigned int> &_origin, std::vector<unsigned int> &_facOrigin, double _predInfo[], std::vector<ForestNode> &_forestNode, std::vector<unsigned int> &_facSplit, std::vector<unsigned int> &_leafOrigin, std::vector<LeafNode> &_leafNode, std::vector<BagRow> &_bagRow, std::vector<unsigned int> &_rank) : forest(new Forest(_forestNode, _origin, _facOrigin, _facSplit)), predInfo(_predInfo), response(Response::FactoryReg(_y, _row2Rank, _leafOrigin, _leafNode, _bagRow, _rank)) {
+}
+
+
+/**
+   @brief Static entry for regression training.
+
+   @param trainBlock is the maximum number of trees trainable simultaneously.
+
+   @param minNode is the mininal number of sample indices represented by a tree node.
+
+   @param minRatio is the minimum information ratio of a node to its parent.
+
+   @return forest height, with output reference parameter.
+*/
+void Train::Regression(int _feRow[], int _feRank[], int _feInvNum[], const std::vector<double> &_y, const std::vector<unsigned int> &_row2Rank, std::vector<unsigned int> &_origin, std::vector<unsigned int> &_facOrigin, double _predInfo[], std::vector<ForestNode> &_forestNode, std::vector<unsigned int> &_facSplit, std::vector<unsigned int> &_leafOrigin, std::vector<LeafNode> &_leafNode, std::vector<BagRow> &_bagRow, std::vector<unsigned int> &_rank) {
+  Train *train = new Train(_y, _row2Rank, _origin, _facOrigin, _predInfo, _forestNode, _facSplit, _leafOrigin, _leafNode, _bagRow, _rank);
+
+  RowRank *rowRank = new RowRank(_feRow, _feRank, _feInvNum, nRow, nPred);
+  train->ForestTrain(rowRank);
+
+  delete rowRank;
+  delete train;
+  DeImmutables();
+}
+
+
+/**
+   @brief Classification constructor.
+ */
+Train::Train(const std::vector<unsigned int> &_yCtg, unsigned int _ctgWidth, const std::vector<double> &_yProxy, std::vector<unsigned int> &_origin, std::vector<unsigned int> &_facOrigin, double _predInfo[], std::vector<ForestNode> &_forestNode, std::vector<unsigned int> &_facSplit, std::vector<unsigned int> &_leafOrigin, std::vector<LeafNode> &_leafNode, std::vector<BagRow> &_bagRow, std::vector<double> &_weight) : forest(new Forest(_forestNode, _origin, _facOrigin, _facSplit)), predInfo(_predInfo), response(Response::FactoryCtg(_yCtg, _yProxy, _leafOrigin, _leafNode, _bagRow, _weight, _ctgWidth)) {
+}
+
+
+/**
+   @brief Static entry for regression training.
+
+   @return void.
+*/
+void Train::Classification(int _feRow[], int _feRank[], int _feInvNum[], const std::vector<unsigned int> &_yCtg, int _ctgWidth, const std::vector<double> &_yProxy, std::vector<unsigned int> &_origin, std::vector<unsigned int> &_facOrigin, double _predInfo[], std::vector<ForestNode> &_forestNode, std::vector<unsigned int> &_facSplit, std::vector<unsigned int> &_leafOrigin, std::vector<LeafNode> &_leafNode, std::vector<BagRow> &_bagRow, std::vector<double> &_weight) {
+  Train *train = new Train(_yCtg, _ctgWidth, _yProxy, _origin, _facOrigin, _predInfo, _forestNode, _facSplit, _leafOrigin, _leafNode, _bagRow, _weight);
+
+  RowRank *rowRank = new RowRank(_feRow, _feRank, _feInvNum, nRow, nPred);
+  train->ForestTrain(rowRank);
+
+  delete rowRank;
+  delete train;
+  DeImmutables();
+}
+
+
+Train::~Train() {
+  delete response;
+  delete forest;
+}
+
+
+/**
+  @brief Trains the requisite number of trees.
+
+  @param trainBlock is the maximum Count of trees to train en block.
+
+  @return void.
+*/
+void Train::ForestTrain(const RowRank *rowRank) {
+  for (unsigned treeStart = 0; treeStart < nTree; treeStart += trainBlock) {
+    unsigned int treeEnd = min(treeStart + trainBlock, nTree); // one beyond.
+    Block(rowRank, treeStart, treeEnd - treeStart);
+  }
+    
+  // Normalizes 'predInfo' to per-tree means.
+  double recipNTree = 1.0 / nTree;
+  for (int i = 0; i < nPred; i++)
+    predInfo[i] *= recipNTree;
+
+  forest->SplitUpdate(rowRank);
+}
+
+
+/**
+
+   @param tEnd is one 
+ */
+void Train::Block(const RowRank *rowRank, unsigned int tStart, unsigned int tCount) {
+  PreTree **ptBlock = response->BlockTree(rowRank, tCount);
+  if (tStart == 0)
+    Reserve(ptBlock, tCount);
+
+  BlockTree(ptBlock, tStart, tCount);
+  response->DeBlock(tCount);
+
+  delete [] ptBlock;
+}
+
+ 
+/** 
+  @brief Estimates forest heights using size parameters from the first
+  trained block of trees.
+
+  @param ptBlock is a block of PreTree references.
+
+  @return void.
+*/
+void Train::Reserve(PreTree **ptBlock, unsigned int tCount) {
+  unsigned int blockFac, blockBag, blockLeaf;
+  unsigned int maxHeight = 0;
+  unsigned int blockHeight = BlockPeek(ptBlock, tCount, blockFac, blockBag, blockLeaf, maxHeight);
+  PreTree::Reserve(maxHeight);
+
+  double slop = (slopFactor * nTree) / trainBlock;
+  forest->Reserve(blockHeight, blockFac, slop);
+  response->LeafReserve(slop * blockLeaf, slop * blockBag);
+}
+
+
+/**
+   @brief Accumulates block size parameters as clues to forest-wide sizes.
+   Estimates improve with larger blocks, at the cost of higher memory footprint.
+
+   @return sum of tree sizes over block, plus output parameters.
+ */
+unsigned int Train::BlockPeek(PreTree **ptBlock, unsigned int tCount, unsigned int &blockFac, unsigned int &blockBag, unsigned int &blockLeaf, unsigned int &maxHeight) {
+  unsigned int blockHeight = 0;
+  blockLeaf = blockFac = blockBag = 0;
+  for (unsigned int i = 0; i < tCount; i++) {
+    PreTree *pt = ptBlock[i];
+    unsigned int height = pt->Height();
+    maxHeight = max(height, maxHeight);
+    blockHeight += height;
+    blockFac += pt->BitWidth();
+    blockLeaf += pt->LeafCount();
+    blockBag += pt->BagCount();
+  }
+
+  return blockHeight;
+}
+
+ 
+/**
+   @brief Builds segment of decision forest for a block of trees.
+
+   @param ptBlock is a vector of PreTree objects.
+
+   @param blockStart is the starting tree index for the block.
+
+   @param blockCount is the number of trees in the block.
+
+   @return void, with side-effected forest.
+*/
+void Train::BlockTree(PreTree **ptBlock, unsigned int blockStart, unsigned int blockCount) {
+  for (unsigned int blockIdx = 0; blockIdx < blockCount; blockIdx++) {
+    unsigned int tIdx = blockStart + blockIdx;
+    const std::vector<unsigned int> leafMap = ptBlock[blockIdx]->DecTree(forest, tIdx, predInfo);
+    response->Leaves(leafMap, blockIdx, tIdx);
+
+    delete ptBlock[blockIdx];
+  }
+}
+
+

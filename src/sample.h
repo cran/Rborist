@@ -16,13 +16,68 @@
 #ifndef ARBORIST_SAMPLE_H
 #define ARBORIST_SAMPLE_H
 
+#include <vector>
+#include "param.h"
+
+
 /**
-   @brief Contains the predictor-specific component of the staged data.
+   @brief Single node type for regression and classification.
+
+   For simplicity, regression and classification variants are distinguished
+   only by method name and not by subtyping.  The only distinction is the
+   value (and interpretation) of the 'ctg' field.  Care should be taken
+   to call the appropriate method, as 'ctg' is only used as a packing
+   parameter (with value zero) in the case of regression.  Subtyping seems
+   to complicate the code needlessly, with a per-tree size savings of only
+   'nSamp' * sizeof(uint).
  */
-class PredOrd {
+class SampleNode {
+  unsigned int ctg;  // Category of sample; no interpretation for regression.
+  FltVal sum; // Sum of values selected:  sCount * y-value.
+
+  // Integer-sized container is likely overkill:  typically << #rows,
+  // although sample weighting might yield run sizes approaching #rows.
+  unsigned int sCount;
+
  public:
-  int rank; // True rank, with ties identically receiving lowest applicable value.
-  int row; // local copy of r2r[] value.
+
+  inline void Set(FltVal _sum, unsigned int _sCount, unsigned int _ctg = 0) {
+    sum = _sum;
+    sCount = _sCount;
+    ctg = _ctg;
+  }
+
+  /**
+     @brief Compound acceessor.
+
+     @param _sum outputs sum.
+
+     @param _sCount outputs sample count.
+
+     @return Category value or default:  classification / regression, plus output reference parameters.
+   */
+  inline unsigned int Ref(FltVal &_sum, unsigned int &_sCount) const {
+    _sum = sum;
+    _sCount = sCount;
+
+    return ctg;
+  }
+
+
+  inline double Sum() const {
+    return sum;
+  }
+  
+
+  /**
+     @brief Accessor for sample count.
+     
+   */
+  inline unsigned int SCount() const {
+    return sCount;
+  }
+
+
 };
 
 
@@ -30,96 +85,130 @@ class PredOrd {
  @brief Run of instances of a given row obtained from sampling for an individual tree.
 */
 class Sample {
-  static double *sYRow;
-  static void TreeInit();
+  int *row2Sample;
+  void PreStage(const class RowRank *rowRank);
+  void PreStage(const class RowRank *rowRank, int predIdx);
  protected:
-  static int nPred;
-  static int nRow;
+  static unsigned int nRow;
+  static unsigned int nPred;
   static int nSamp;
-  static PredOrd *predOrd;
-  static int *sCountRow;
-  static void CountRows(const int rvRow[]);
- public:
-  double sum; // Sum of values selected:  rowRun * y-value.
-  // Integer-sized container is likely overkill.  Size is typically << #rows,
-  // although sample weighting might yield run sizes approaching #rows.
-  unsigned int rowRun;
+  SampleNode *sampleNode;
+  unsigned int bagCount;
+  double bagSum;
+  class BV *treeBag;
+  class SamplePred *samplePred;
+  class SplitPred *splitPred;
+  void PreStage(const std::vector<double> &y, const std::vector<unsigned int> &yCtg, const class RowRank *rowRank);
 
-  static bool *inBag; // Overwritten by each tree.
-  static int *sIdxRow; // Inverted by FacResponse for local use.
+  static unsigned int *RowSample();
+
+ public:
+  static class SampleCtg *FactoryCtg(const std::vector<double> &y, const class RowRank *rowRank, const std::vector<unsigned int> &yCtg);
+  static class SampleReg *FactoryReg(const std::vector<double> &y, const class RowRank *rowRank, const std::vector<unsigned int> &row2Rank);
+
+  static void Immutables(unsigned int _nRow, unsigned int _nPred, int _nSamp, double _feSampleWeight[], bool _withRepl, unsigned int _ctgWidth, int _nTree);
+  static void DeImmutables();
+
+  Sample();
+  void RowInvert(std::vector<unsigned int> &sample2Row) const;
+  
+  /**
+     @brief Accessor for sample count.
+   */
   static inline int NSamp() {
     return nSamp;
   }
-  static inline int NRow() {
-    return nRow;
+
+  
+  /**
+     @param row row index at which to look up sample index.
+
+     @return Sample index associated with row, or -1 if none.
+   */
+  inline int SampleIdx(unsigned int row) const {
+    return row2Sample[row];
   }
-  static void Factory(int _nRow, int _nPred, int _nSamp);
-  static void TreeClear();
-  static void DeFactory();
+  
+  
+  /**
+     @brief Accessor for bag count.
+   */
+  inline unsigned int BagCount() const {
+    return bagCount;
+  }
+
+  
+  inline double BagSum() const {
+    return bagSum;
+  }
+
+  
+  inline class SplitPred *SplPred() {
+    return splitPred;
+  }
+
+  
+  inline class SamplePred *SmpPred() {
+    return samplePred;
+  }
+
+    
+  inline const class BV *TreeBag() const {
+    return treeBag;
+  }
+
+
+  inline unsigned int SCount(unsigned int sIdx) const {
+    return sampleNode[sIdx].SCount();
+  }
+
+
+  inline unsigned int Ref(int sIdx, FltVal &_sum, unsigned int &_sCount) const {
+    return sampleNode[sIdx].Ref(_sum, _sCount);
+  }
+
+  
+  inline FltVal Sum(int sIdx) const {
+    return sampleNode[sIdx].Sum();
+  }
+
+  
+  virtual ~Sample();
 };
+
 
 /**
    @brief Regression-specific methods and members.
 */
 class SampleReg : public Sample {
-  static SampleReg *sampleReg;
-  static int *sample2Rank;
+  unsigned int *sample2Rank; // Only client currently leaf-based methods.
+  void SetRank(const std::vector<unsigned int> &row2Rank);
  public:
-  /**
-     @brief Computes the sum of all sampled response values.
+  SampleReg();
+  ~SampleReg();
 
-     @param bagCount is the size of this tree's in-bag set.
-
-     @return sum of sampled values.
-  */
-  static double Sum(int bagCount) {
-    double _sum = 0.0;
-    for (int i = 0; i < bagCount; i++)
-      _sum += sampleReg[i].sum;
-
-    return _sum;
+  inline unsigned int Rank(unsigned int sIdx) const {
+    return sample2Rank[sIdx];
   }
-  static int SampleRows(const int rvRow[],  const double y[], const int row2Rank[]);
-  static void Stage();
-  static void Stage(int predIdx);
-  static void Scores(int bagCount, int leafCount, double score[]);
-  static void TreeQuantiles(int treeSize, int bagCount, int leafPos[], int leafExtent[], int rank[], int rankCount[]);
-  static void TreeClear();
+
+
+  void Stage(const std::vector<double> &y, const std::vector<unsigned int> &row2Rank, const class RowRank *rowRank);
 };
 
+
 /**
- @brief Categorical-specific sampling.
+ @brief Classification-specific sampling.
 */
 class SampleCtg : public Sample {
-  static SampleCtg *sampleCtg;
+  static unsigned int ctgWidth;
  public:
-  unsigned int ctg;
+  SampleCtg();
+  ~SampleCtg();
+  static void Immutables(unsigned int _ctgWidth, int _nTree);
+  static void DeImmutables();
 
-  /**
-     @brief Computes the sum of sample values for the current tree.
-
-     @param bagCount is the number of samples drawn.
-
-     @return sum of (proxy) response values.
-  */
-  static double Sum(int bagCount) {
-    double _sum = 0.0;
-    for (int i = 0; i < bagCount; i++)
-      _sum += sampleCtg[i].sum;
-
-    return _sum;
-  }
-
-  static int CtgSum(int sIdx, double &_sum) {
-    _sum = sampleCtg[sIdx].sum;
-    return sampleCtg[sIdx].ctg;
-  }
-
-  static int SampleRows(const int rvRow[], const int yCtg[], const double y[]);
-  static void Stage();
-  static void Stage(int predIdx);
-  static void Scores(int bagCount, int ctgWidth, int leafCount, double score[]);
-  static void TreeClear();
+  
+  void Stage(const std::vector<unsigned int> &yCtg, const std::vector<double> &y, const class RowRank *rowRank);
 };
 
 

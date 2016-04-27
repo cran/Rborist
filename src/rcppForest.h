@@ -1,4 +1,4 @@
-// Copyright (C)  2012-2016   Mark Seligman
+// Copyright (C)  2012-2016  Mark Seligman
 //
 // This file is part of ArboristBridgeR.
 //
@@ -16,23 +16,22 @@
 // along with ArboristBridgeR.  If not, see <http://www.gnu.org/licenses/>.
 
 /**
-   @file callback.h
+   @file rcppForest.h
 
-   @brief Exposes utility functions provided by the front end.
+   @brief C++ class definitions for managing Forest object.
 
    @author Mark Seligman
+
  */
 
-#ifndef ARBORIST_CALLBACK_H
-#define ARBORIST_CALLBACK_H
 
-class CallBack {
- public:
-  static void SampleInit(unsigned int _nRow, double _sampleWeight[], bool _withRepl);
-  static void SampleRows(unsigned int nSamp, int out[]);
-  static void QSortI(int ySorted[],  int rank2Row[], int one,  int nRow);
-  static void QSortD(double ySorted[],  int rank2Row[], int one,  int nRow);
-  static void RUnif(int len, double out[]);
-};
+#ifndef ARBORIST_RCPP_FOREST_H
+#define ARBORIST_RCPP_FOREST_H
+
+using namespace Rcpp;
+
+RcppExport SEXP ForestWrap(const std::vector<unsigned int> &origin, const std::vector<unsigned int> &facOrigin, const std::vector<unsigned int> &facSplit, const std::vector<class ForestNode> &test);
+
+void ForestUnwrap(SEXP sForest, std::vector<unsigned int> &_origin, std::vector<unsigned int> &_facOrig, std::vector<unsigned int> &_facSplit, std::vector<class ForestNode> *&_forestNode);
 
 #endif

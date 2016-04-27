@@ -1,4 +1,4 @@
-# Copyright (C)  2012-20154   Mark Seligman
+# Copyright (C)  2012-2016   Mark Seligman
 ##
 ## This file is part of ArboristBridgeR.
 ##
@@ -18,33 +18,93 @@
 # 'y' should be defined on entry.  Other entry points to be used for different behaviours.
 #
 "Rborist.default" <- function(x, y, nTree=500, withRepl = TRUE,
-                #importance = FALSE,
-                #nPermute = ifelse(importance, 1, 0),
-                predProb = ifelse(!is.factor(y), 0.4, sqrt(ncol(x))/ncol(x)),
-                predWeight = rep(1.0, ncol(x)),
-                nSamp = ifelse(withRepl, nrow(x), round((1-exp(-1))*nrow(x))),
-                minNode = ifelse(!is.factor(y), 6, 2),
-                nLevel = 0,
+                ctgCensus = "votes",
+                classWeight = NULL,
                 minInfo = 0.01,
-                sampleWeight = NULL,
+                minNode = ifelse(is.factor(y), 2, 5),
+                nLevel = 0,
+                noValidate = FALSE,
+                nSamp = 0,
+                predFixed = 0,
+                predProb = 0.0,
+                predWeight = NULL, 
                 quantVec = NULL,
                 quantiles = !is.null(quantVec),
-                pvtBlock = 8, pvtNoPredict = FALSE, ...) {
+                qBin = 5000,
+                regMono = NULL,
+                rowWeight = NULL,
+                treeBlock = 1,
+                pvtBlock = 8, ...) {
 
   # Argument checking:
-  if (any(is.na(x)))
-    stop("NA not supported in design matrix")
+  if (inherits(x, "PreTrain")) {
+    preTrain <- x 
+  }
+  else {
+    preTrain <- PreTrain(x)
+  }
+  predBlock <- preTrain$predBlock
+  nPred <- predBlock$nPredNum + predBlock$nPredFac
+  nRow <- predBlock$nRow
+
+  if (is.null(regMono)) {
+    regMono <- rep(0.0, nPred)
+  }
+  if (nSamp == 0) {
+    nSamp <- ifelse(withRepl, nRow, round((1-exp(-1)) * nRow))
+  }
+  if (predFixed == 0) {
+    predFixed <- ifelse(predProb != 0.0, 0, ifelse(nPred >= 16, 0, ifelse(!is.factor(y), max(floor(nPred/3), 1), floor(sqrt(nPred)))))
+  }
+  if (predProb == 0.0) {
+    predProb <- ifelse(predFixed != 0, 0.0, ifelse(!is.factor(y), 0.4, ceiling(sqrt(nPred))/nPred))
+  }
+  if (is.null(predWeight)) {
+    predWeight <- rep(1.0, nPred)
+  }
+
   if (any(is.na(y)))
     stop("NA not supported in response")
+  if (!is.numeric(y) && !is.factor(y))
+    stop("Expecting numeric or factor response")
 
+  # Class weights
+  if (is.factor(y)) {
+    # Allows for gaps:
+    ctgWidth <- max(as.integer(y))
+    if (!is.null(classWeight)) {
+      if (is.numeric(classWeight)) {
+        if (length(classWeight) != ctgWidth)
+          stop("class weights must conform to response cardinality")
+        if (any(classWeight < 0))
+          stop("class weights must be nonnegative")
+        if (all(classWeight == 0.0)) {
+          stop("class weights cannot all be zero")
+        }
+      }
+      else if (classWeight == "balance") { # place-holder value
+        classWeight <- rep(0.0, ctgWidth)
+      }
+      else {
+        stop("Unrecognized class weights")
+      }
+    }
+    else {
+      classWeight <- rep(1.0, ctgWidth)
+    }
+  }
+  else if (!is.null(classWeight)) {
+    stop("class weights only defined for classification")
+  }
+  
   # Height constraints
-  if (minNode < 2)
-    stop("Minimum splitting width must be at least 2")
+  if (minNode < 1)
+    stop("Minimum node size must be positive")
   else if (minNode > nSamp)
-    stop("Minimum splitting width exceeds tree size")
+    stop("Minimum splitting width exceeds sample count")
 
   # Predictor weight constraints
-  if (length(predWeight) != ncol(x))
+  if (length(predWeight) != nPred)
     stop("Length of predictor weight does not equal number of columns")
   if (any(predWeight < 0))
     stop("Negative predictor weights")
@@ -57,15 +117,15 @@
     stop("Empty classes not supported in response.")
 
   # Sample weight constraints.
-  if (!is.null(sampleWeight)) {
-    if (length(sampleWeight) != nrow(x))
+  if (!is.null(rowWeight)) {
+    if (length(rowWeight) != nRow)
       stop("Sample weight length must match row count")
     
-    if (any(sampleWeight < 0))
+    if (any(rowWeight < 0))
       stop("Negative weights not permitted")
   }
   else {
-    sampleWeight = rep(1.0, nrow(x))
+    rowWeight = rep(1.0, nRow)
   }
   
   # Quantile constraints:  regression only
@@ -79,168 +139,105 @@
       stop("Quantile range must be increasing")
   }
 
-   # L'Ecuyer's CMRG has more desirable distributional properties for this application.
-  saveRNG <- RNGkind()[1]
-  RNGkind("L'Ecuyer-CMRG")
-
   # Normalizes vector of pointwise predictor probabilites.
-  probVec <- predWeight * ((ncol(x) * predProb) / sum(predWeight))
-  PredBlock(x, y, probVec)
-  
-  # There is currently very little freedom in factory ordering.
-  unused <- .Call("RcppSample", nrow(x), ncol(x), nSamp, sampleWeight, withRepl)
+  #if (predProb != 0 && predFixed != 0)
+   # stop("Only one of 'predProb' and 'predFixed' may be specified")
+  if (length(predProb) > 1)
+    stop("'predProb' must have a scalar value")
+  if (predProb < 0 || predProb > 1.0)
+    stop("'predProb' value must lie in [0,1]")
+  if (predFixed < 0 || predFixed > nPred)
+    stop("'predFixed' must be positive integer <= predictor count")
 
-  levelMax <- .Call("RcppTrainInit", nTree, minInfo, pvtBlock);
-  ctgWidth <- .Call("RcppResponse", y, levelMax)
+  meanWeight <- ifelse(predProb == 0.0, 1.0, predProb)
+  probVec <- predWeight * (nPred * meanWeight) / sum(predWeight)
 
-  facWidth <- integer(1)
-  totBagCount <- integer(1)
-  totQLeafWidth <- integer(1)
-  height <- .Call("RcppTrain", minNode, quantiles, facWidth, totBagCount, nLevel)
-  
-  # The forest consists of trees specified by a splitting predictor and value, as
-  # well as a Gini coefficient and subtree mean.
-  predGini <- numeric(ncol(x))
-  if (pvtNoPredict) {
-    error <- -1
-    confusion <- -1
+  if (is.factor(y)) {
+    if (any(regMono != 0)) {
+      stop("Monotonicity undefined for categorical response")
+    }
+    train <- .Call("RcppTrainCtg", predBlock, preTrain$rowRank, y, nTree, nSamp, rowWeight, withRepl, treeBlock, minNode, minInfo, nLevel, predFixed, probVec, classWeight)
   }
   else {
-    unused <- PredBlock(x)
+    train <- .Call("RcppTrainReg", predBlock, preTrain$rowRank, y, nTree, nSamp, rowWeight, withRepl, treeBlock, minNode, minInfo, nLevel, predFixed, probVec, regMono)
+  }
+
+  predInfo <- train[["predInfo"]]
+  names(predInfo) <- predBlock$colnames
+  training = list(
+    info = predInfo
+  )
+
+  if (!noValidate) {
     if (is.factor(y)) {
-      error <- numeric(nlevels(y))
-      confusion <- matrix(0L, nlevels(y), nlevels(y))
-      unused <- .Call("RcppPredictOOBCtg", predGini, confusion, error)
-    }
-    else {
-      error <- numeric(1)
-      if (quantiles) {
-        if (is.null(quantVec))
-          quantVec <- DefaultQuantVec()
-        qPred <- numeric(nrow(x) * length(quantVec))
-        unused <- .Call("RcppPredictOOBQuant", predGini, error, quantVec, qPred)
-        qPred <- matrix(qPred, nrow(x), length(quantVec), byrow = TRUE)
+      if (ctgCensus == "votes") {
+        validation <- .Call("RcppValidateVotes", predBlock, train$forest, train$leaf, y);
+      }
+      else if (ctgCensus == "prob") {
+        validation <- .Call("RcppValidateProb", predBlock, train$forest, train$leaf, y);
       }
       else {
-        qPred <- NULL
-        unused <- .Call("RcppPredictOOB", predGini, error)
+        stop(paste("Unrecognized ctgCensus type:  ", ctgCensus))
+      }
+    }
+    else {
+      if (quantiles) {
+        if (is.null(quantVec)) {
+          quantVec <- DefaultQuantVec()
+        }
+        validation <- .Call("RcppValidateQuant", predBlock, train$forest, train$leaf, quantVec, qBin, y);
+      }
+      else {
+        validation <- .Call("RcppValidateReg", predBlock, train$forest, train$leaf, y);
       }
     }
   }
-  
-  if (quantiles) {
-    qYRanked <- numeric(nrow(x))
-    qRankOrigin <- integer(nTree)
-    qRank <- integer(totBagCount)
-    qRankCount <- integer(totBagCount)
-    qLeafPos <- integer(height)
-    qLeafExtent <- integer(height)
-
-    unused <- .Call("RcppWriteQuantile", qYRanked, qRankOrigin, qRank, qRankCount, qLeafPos, qLeafExtent)
-    qOut <- list(qYRanked = qYRanked,
-                  qRankOrigin = qRankOrigin,
-                  qRank = qRank,
-                  qRankCount = qRankCount,
-                  qLeafPos = qLeafPos,
-                  qLeafExtent = qLeafExtent
-                  )
-  }
-  else
-    qOut <- NULL
-
-  preds <-  integer(height)
-  splits <- numeric(height)
-  leafScores <- numeric(height)
-#  splitGini <- matrix(0.0, height, ntree)
-  facSplits <- integer(as.integer(facWidth))
-  bump <- integer(height)
-  facOff <- integer(nTree)
-  origins <- integer(nTree)
-  unused <- .Call("RcppWriteForest", preds, splits, leafScores, bump, origins, facOff, facSplits);
-
-
-  RNGkind(saveRNG)
-  if (is.factor(y)) {
-    arbOut <- list(
-                forest = list(
-                  predictors = preds,
-                  splitValues = splits,
-                  scores = leafScores,
-                  bump = bump,
-                  origins = origins,
-                  facOff = facOff,
-                  facSplits = facSplits,
-                  ctgWidth = ctgWidth),
-#                splitGini = splitGini,
-                misprediction = error,
-                Gini = predGini,
-                confusion = confusion
-                )
-  }
   else {
-    mse <- error[1]
-    arbOut <- list(
-                forest = list(
-                  predictors = preds,
-                  splitValues = splits,
-                  scores = leafScores,
-                  bump = bump,
-                  origins = origins,
-                  facOff = facOff,
-                  facSplits = facSplits,
-                  quant = qOut),
-#                splitGini = splitGini,
-                mse = mse,
-                rsq = 1 - (mse*nrow(x))/ (var(y) * (nrow(x) - 1)),
-                qPred = qPred,
-                Gini = predGini
-                )
+    validation <- NULL
   }
+
+  arbOut <- list(
+    forest = train$forest,
+    leaf = train$leaf,
+    signature = predBlock$signature,
+    training = training,
+    validation = validation
+  )
   class(arbOut) <- "Rborist"
+
   arbOut
 }
 
-# Breaks data into blocks suitable for Rcpp methods.
+# Groups predictors into like-typed blocks and creates zero-based type
+# summaries.
 #
-PredBlock <- function(x, y = NULL, predProb = NULL){#, quantiles = NULL) {
-  training <- ifelse(is.null(y), FALSE, TRUE)
-  
-  # For now, turns off any special handling of Integer and Character to process as numeric:
+PredBlock <- function(x, sigTrain = NULL) {
+  # For now, only numeric and factor types supported.
   #
-  if (!is.null(predProb)) {
-    .Call("RcppPredictorFactory",predProb, ncol(x), nrow(x))
-  }
-  else { # TODO:  Pass null instead of zero.
-    .Call("RcppPredictorFactory",0, ncol(x), nrow(x))
-  }
   if (is.data.frame(x)) { # As with "randomForest" package
-    facLevels <- as.integer(sapply(x, function(col) ifelse(is.factor(col) && !is.ordered(col), length(levels(col)), 0)))
+    facCard <- as.integer(sapply(x, function(col) ifelse(is.factor(col) && !is.ordered(col), length(levels(col)), 0)))
     numCols <- as.integer(sapply(x, function(col) ifelse(is.numeric(col), 1, 0)))
-    nFacCol <- length(which(facLevels > 0))
-    nNumCol <- length(which(numCols > 0))
-    if (nFacCol + nNumCol != ncol(x))
-      stop("Non-numeric, non-factor data appear among observations")
-    
-    .Call("RcppPredictorFrame", x, nrow(x), ncol(x), nFacCol, nNumCol, facLevels)
+    facIdx <- which(facCard > 0)
+    numIdx <- which(numCols > 0)
+    if (length(numIdx) + length(facIdx) != ncol(x)) {
+      stop("Frame column with unsupported data type")
+    }
+    return(.Call("RcppPredBlockFrame", x, numIdx, facIdx, facCard, sigTrain))
   }
   else if (is.integer(x)) {
-    .Call("RcppPredictorNum", data.matrix(x), TRUE)
+    return(.Call("RcppPredBlockNum", data.matrix(x)))
   }
   else if (is.numeric(x)) {
-    if (training) {
-      .Call("RcppPredictorNum", x, TRUE)
-    }
-    else {
-      .Call("RcppPredictorNum", x, FALSE)
-    }
+    return(.Call("RcppPredBlockNum", x))
   }
   else if (is.character(x)) {
-    stop("Character data not yet supported");
+    stop("Character data not yet supported")
   }
   else {
-    stop("Unsupported data format");
+    stop("Unsupported data format")
   }
 }
+
 
 # Uses quartiles by default.
 #
