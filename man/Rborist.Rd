@@ -18,7 +18,7 @@
                 ctgCensus = "votes",
                 classWeight = NULL,
                 minInfo = 0.01,
-                minNode = ifelse(is.factor(y), 2, 5),
+                minNode = ifelse(is.factor(y), 2, 3),
                 nLevel = 0,
                 noValidate = FALSE,
                 nSamp = 0,
@@ -35,7 +35,7 @@
 }
 
 \arguments{
-  \item{x}{ the design matrix expressed as a \code{PreTrain} object, as a
+  \item{x}{ the design matrix expressed as a \code{PreFormat} object, as a
   \code{data.frame} object with numeric and/or \code{factor} columns or
   as a numeric matrix.}
   \item{y}{ the response (outcome) vector, either numerical or

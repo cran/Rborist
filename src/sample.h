@@ -97,7 +97,7 @@ class Sample {
   double bagSum;
   class BV *treeBag;
   class SamplePred *samplePred;
-  class SplitPred *splitPred;
+  class Bottom *bottom;
   void PreStage(const std::vector<double> &y, const std::vector<unsigned int> &yCtg, const class RowRank *rowRank);
 
   static unsigned int *RowSample();
@@ -106,7 +106,7 @@ class Sample {
   static class SampleCtg *FactoryCtg(const std::vector<double> &y, const class RowRank *rowRank, const std::vector<unsigned int> &yCtg);
   static class SampleReg *FactoryReg(const std::vector<double> &y, const class RowRank *rowRank, const std::vector<unsigned int> &row2Rank);
 
-  static void Immutables(unsigned int _nRow, unsigned int _nPred, int _nSamp, double _feSampleWeight[], bool _withRepl, unsigned int _ctgWidth, int _nTree);
+  static void Immutables(unsigned int _nRow, unsigned int _nPred, int _nSamp, const double _feSampleWeight[], bool _withRepl, unsigned int _ctgWidth, int _nTree);
   static void DeImmutables();
 
   Sample();
@@ -143,8 +143,8 @@ class Sample {
   }
 
   
-  inline class SplitPred *SplPred() {
-    return splitPred;
+  inline class Bottom *Bot() {
+    return bottom;
   }
 
   

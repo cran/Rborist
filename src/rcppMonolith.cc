@@ -44,6 +44,81 @@
 // along with ArboristBridgeR.  If not, see <http://www.gnu.org/licenses/>.
 
 /**
+   @file rcppSample.cc
+
+   @brief Interface to front-end methods implementing (response) sampling.
+
+   @author Mark Seligman
+ */
+
+#include <RcppArmadilloExtensions/sample.h>
+#include "rcppSample.h"
+
+//#include <iostream>
+//using namespace std;
+
+unsigned int RcppSample::nRow = 0;
+bool RcppSample::withRepl = false;
+
+NumericVector weightNull(0);
+NumericVector &RcppSample::weight = weightNull;
+
+/**
+   @brief Caches row sampling parameters as static values.
+
+   @param _nRow is length of the response vector.
+
+   @param _weight is user-specified weighting of row samples.
+
+   @param _withRepl is true iff sampling with replacement.
+
+   @return void.
+ */
+void RcppSample::Init(unsigned int _nRow, const double feWeight[], bool _withRepl) {
+  nRow = _nRow;
+  NumericVector _weight(nRow);
+  weight = _weight;
+  for (unsigned int i = 0; i < nRow; i++)
+    weight[i] = feWeight[i];
+  withRepl = _withRepl;
+}
+
+
+/**
+   @brief Samples row indices either with or without replacement using methods from RccpArmadillo.
+
+   @param nSamp is the number of samples to draw.
+
+   @param out[] is an output vector of sampled row indices.
+
+   @return void, with output vector.
+ */
+void RcppSample::SampleRows(unsigned int nSamp, int out[]) {
+  RNGScope scope;
+  IntegerVector rowVec(seq_len(nRow)-1);
+  IntegerVector samp = RcppArmadillo::sample(rowVec, nSamp, withRepl, weight);
+
+  for (unsigned int i = 0; i < nSamp; i++)
+    out[i] = samp[i];
+}
+// Copyright (C)  2012-2016   Mark Seligman
+//
+// This file is part of ArboristBridgeR.
+//
+// ArboristBridgeR is free software: you can redistribute it and/or modify it
+// under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 2 of the License, or
+// (at your option) any later version.
+//
+// ArboristBridgeR is distributed in the hope that it will be useful, but
+// WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with ArboristBridgeR.  If not, see <http://www.gnu.org/licenses/>.
+
+/**
    @file rcppExport.cc
 
    @brief C++ interface to R entry for export methods.
@@ -101,13 +176,13 @@ RcppExport SEXP ExportReg(SEXP sForest, SEXP sLeaf, IntegerVector predMap) {
   // distributes per tree.
   //
   std::vector<unsigned int> nodeOrigin, facOrigin, splitBV;
-  std::vector<ForestNode> *forestNode;
-  ForestUnwrap(sForest, nodeOrigin, facOrigin, splitBV, forestNode);
+  std::vector<ForestNode> forestNode;
+  RcppForest::Unwrap(sForest, nodeOrigin, facOrigin, splitBV, forestNode);
 
   unsigned int nTree = nodeOrigin.size();
   std::vector<std::vector<unsigned int> > predTree(nTree), bumpTree(nTree);
   std::vector<std::vector<double > > splitTree(nTree);
-  ForestNode::Export(nodeOrigin, *forestNode, predTree, bumpTree, splitTree);
+  ForestNode::Export(nodeOrigin, forestNode, predTree, bumpTree, splitTree);
   PredExport(predMap.begin(), predTree, bumpTree);
   
   std::vector<std::vector<unsigned int> > facSplitTree(nTree);
@@ -115,17 +190,17 @@ RcppExport SEXP ExportReg(SEXP sForest, SEXP sLeaf, IntegerVector predMap) {
 
   std::vector<double> yRanked;
   std::vector<unsigned int> leafOrigin;
-  std::vector<LeafNode> *leafNode;
-  std::vector<BagRow> *bagRow;
+  std::vector<LeafNode> leafNode;
+  std::vector<BagRow> bagRow;
   unsigned int rowTrain;
   std::vector<unsigned int> rank;
-  LeafUnwrapReg(sLeaf, yRanked, leafOrigin, leafNode, bagRow, rowTrain, rank);
+  RcppLeaf::UnwrapReg(sLeaf, yRanked, leafOrigin, leafNode, bagRow, rowTrain, rank);
 
   std::vector<std::vector<unsigned int> > rowTree(nTree), sCountTree(nTree);
   std::vector<std::vector<double> > scoreTree(nTree);
   std::vector<std::vector<unsigned int> > extentTree(nTree);
   std::vector<std::vector<unsigned int> > rankTree(nTree);
-  LeafReg::Export(leafOrigin, *leafNode, *bagRow, rank, rowTree, sCountTree, scoreTree, extentTree, rankTree);
+  LeafReg::Export(leafOrigin, leafNode, bagRow, rank, rowTree, sCountTree, scoreTree, extentTree, rankTree);
 
   List outBundle = List::create(
 				_["rowTrain"] = rowTrain,
@@ -152,31 +227,31 @@ RcppExport SEXP ExportReg(SEXP sForest, SEXP sLeaf, IntegerVector predMap) {
  */
 RcppExport SEXP ExportCtg(SEXP sForest, SEXP sLeaf, IntegerVector predMap) {
   std::vector<unsigned int> nodeOrigin, facOrigin, splitBV;
-  std::vector<ForestNode> *forestNode;
-  ForestUnwrap(sForest, nodeOrigin, facOrigin, splitBV, forestNode);
+  std::vector<ForestNode> forestNode;
+  RcppForest::Unwrap(sForest, nodeOrigin, facOrigin, splitBV, forestNode);
 
   unsigned int nTree = nodeOrigin.size();
   std::vector<std::vector<unsigned int> > predTree(nTree), bumpTree(nTree);
   std::vector<std::vector<double > > splitTree(nTree);
-  ForestNode::Export(nodeOrigin, *forestNode, predTree, bumpTree, splitTree);
+  ForestNode::Export(nodeOrigin, forestNode, predTree, bumpTree, splitTree);
   PredExport(predMap.begin(), predTree, bumpTree);
   
   std::vector<std::vector<unsigned int> > facSplitTree(nTree);
   BVJagged::Export(facOrigin, splitBV, facSplitTree);
 
   std::vector<unsigned int> leafOrigin;
-  std::vector<LeafNode> *leafNode;
-  std::vector<BagRow> *bagRow;
+  std::vector<LeafNode> leafNode;
+  std::vector<BagRow> bagRow;
   unsigned int rowTrain;
   std::vector<double> weight;
   CharacterVector yLevel;
-  LeafUnwrapCtg(sLeaf, leafOrigin, leafNode, bagRow, rowTrain, weight, yLevel);
+  RcppLeaf::UnwrapCtg(sLeaf, leafOrigin, leafNode, bagRow, rowTrain, weight, yLevel);
 
   std::vector<std::vector<unsigned int> > rowTree(nTree), sCountTree(nTree);
   std::vector<std::vector<double> > scoreTree(nTree);
   std::vector<std::vector<unsigned int> > extentTree(nTree);
   std::vector<std::vector<double> > weightTree(nTree);
-  LeafCtg::Export(leafOrigin, *leafNode, *bagRow, weight, yLevel.length(), rowTree, sCountTree, scoreTree, extentTree, weightTree);
+  LeafCtg::Export(leafOrigin, leafNode, bagRow, weight, yLevel.length(), rowTree, sCountTree, scoreTree, extentTree, weightTree);
 
   List outBundle = List::create(
 				_["rowTrain"] = rowTrain,
@@ -381,7 +456,7 @@ RcppExport SEXP RcppForestFloorExport(SEXP sArbOut) {
 
   IntegerVector predMap;
   List predLevel;
-  SignatureUnwrap(arbOut["signature"], predMap, predLevel);
+  RcppPredblock::SignatureUnwrap(arbOut["signature"], predMap, predLevel);
 
   List leaf((SEXP) arbOut["leaf"]);
   if (leaf.inherits("LeafReg"))  {
@@ -421,15 +496,7 @@ RcppExport SEXP RcppForestFloorExport(SEXP sArbOut) {
  */
 
 
-#include <RcppCommon.h>
-
 #include "forest.h"
-
-namespace Rcpp {
-  template <> SEXP wrap(const std::vector<ForestNode> &);
-  template <> std::vector<ForestNode>* as(SEXP);
-}
-
 #include <Rcpp.h>
 
 using namespace std;
@@ -437,24 +504,17 @@ using namespace Rcpp;
 
 #include "rcppForest.h"
 
-
-template<> SEXP Rcpp::wrap(const std::vector<ForestNode> &forestNode) {
-  XPtr<const std::vector<ForestNode> > extWrap(new std::vector<ForestNode>(forestNode), true);
- return wrap(extWrap);
-}
-
-
-template <> std::vector<ForestNode>* Rcpp::as(SEXP sFN) {
-  Rcpp::XPtr<std::vector<ForestNode> > xp(sFN);
-  return (std::vector<ForestNode>*) xp;
-}
-
-
 //#include <iostream>
 
-RcppExport SEXP ForestWrap(const std::vector<unsigned int> &origin, const std::vector<unsigned int> &facOrigin, const std::vector<unsigned int> &facSplit, const std::vector<ForestNode> &forestNode) {
+SEXP RcppForest::Wrap(const std::vector<unsigned int> &origin, const std::vector<unsigned int> &facOrigin, const std::vector<unsigned int> &facSplit, const std::vector<ForestNode> &forestNode) {
+  unsigned int rawSize = forestNode.size() * sizeof(ForestNode);
+  RawVector fnRaw(rawSize);
+  for (unsigned int i = 0; i < rawSize; i++) {
+    fnRaw[i] = ((unsigned char*) &forestNode[0])[i];
+  }
+
   List forest = List::create(
-     _["forestNode"] = forestNode,
+     _["forestNode"] = fnRaw,
      _["origin"] = origin,
      _["facOrig"] = facOrigin,
      _["facSplit"] = facSplit);
@@ -469,15 +529,23 @@ RcppExport SEXP ForestWrap(const std::vector<unsigned int> &origin, const std::v
 
    @return void.
  */
-void ForestUnwrap(SEXP sForest, std::vector<unsigned int> &_origin, std::vector<unsigned int> &_facOrig, std::vector<unsigned int> &_facSplit, std::vector<ForestNode> *&_forestNode) {
+void RcppForest::Unwrap(SEXP sForest, std::vector<unsigned int> &_origin, std::vector<unsigned int> &_facOrig, std::vector<unsigned int> &_facSplit, std::vector<ForestNode> &_forestNode) {
   List forest(sForest);
   if (!forest.inherits("Forest"))
     stop("Expecting Forest");
 
+  RawVector fnRaw = forest["forestNode"];
+  unsigned int rawSize = fnRaw.length();
+  std::vector<ForestNode> forestNode(rawSize / sizeof(ForestNode));
+  for (unsigned int i = 0; i < rawSize; i++) {
+    ((unsigned char*) &forestNode[0])[i] = fnRaw[i];
+  }
+  
+
   _origin = as<std::vector<unsigned int> >(forest["origin"]);
   _facOrig = as<std::vector<unsigned int> >(forest["facOrig"]);
   _facSplit = as<std::vector<unsigned int> >(forest["facSplit"]);
-  _forestNode = as<std::vector<ForestNode> *>(forest["forestNode"]);
+  _forestNode = std::move(forestNode);
 }
 // Copyright (C)  2012-2016   Mark Seligman
 //
@@ -505,77 +573,38 @@ void ForestUnwrap(SEXP sForest, std::vector<unsigned int> &_origin, std::vector<
  */
 
 
-#include <RcppCommon.h>
-
 #include "leaf.h"
-
-namespace Rcpp {
-  template <> SEXP wrap(const std::vector<LeafNode> &);
-  template <> SEXP wrap(const std::vector<BagRow> &);
-  template <> std::vector<LeafNode>* as(SEXP);
-  template <> std::vector<BagRow>* as(SEXP);
-}
-
 #include "rcppLeaf.h"
-
-template <> SEXP Rcpp::wrap(const std::vector<LeafNode> &leafNode) {
-  XPtr<const std::vector<LeafNode> > extWrap(new std::vector<LeafNode>(leafNode), true);
-
-  return wrap(extWrap);
-}
-
-
-template <> SEXP Rcpp::wrap(const std::vector<BagRow> &bagRow) {
-  XPtr<const std::vector<BagRow> > extWrap(new std::vector<BagRow>(bagRow), true);
-
-  return wrap(extWrap);
-}
-
-
-template <> std::vector<LeafNode>* Rcpp::as(SEXP sLNReg) {
-  Rcpp::XPtr<std::vector<LeafNode> > xp(sLNReg);
-  return (std::vector<LeafNode>*) xp;
-}
-
-
-template <> std::vector<BagRow>* Rcpp::as(SEXP sLNReg) {
-  Rcpp::XPtr<std::vector<BagRow> > xp(sLNReg);
-  return (std::vector<BagRow>*) xp;
-}
 
 
 /**
    @brief Wraps core (regression) Leaf vectors for reference by front end.
  */
-RcppExport SEXP LeafWrapReg(const std::vector<unsigned int> &leafOrigin, const std::vector<LeafNode> &leafNode, const std::vector<BagRow> &bagRow, unsigned int rowTrain, const std::vector<unsigned int> &rank, const std::vector<double> &yRanked) {
+SEXP RcppLeaf::WrapReg(const std::vector<unsigned int> &leafOrigin, std::vector<LeafNode> &leafNode, const std::vector<BagRow> &bagRow, unsigned int rowTrain, const std::vector<unsigned int> &rank, const std::vector<double> &yRanked) {
+  // Serializes the two internally-typed objects, 'LeafNode' and 'BagRow'.
+  //
+  unsigned int rawSize = leafNode.size() * sizeof(LeafNode);
+  RawVector leafRaw(rawSize);
+  for (unsigned int i = 0; i < rawSize; i++) {
+    leafRaw[i] = ((unsigned char*) &leafNode[0])[i];
+  }
+
+  unsigned int BRSize = bagRow.size() * sizeof(BagRow);
+  RawVector BRRaw(BRSize);
+  for (unsigned int i = 0; i < BRSize; i++) {
+    BRRaw[i] = ((unsigned char*) &bagRow[0])[i];
+  }
+
   List leaf = List::create(
    _["origin"] = leafOrigin,
-   _["node"] = leafNode,
-   _["bagRow"] = bagRow,
+   _["node"] = leafRaw,
+   _["bagRow"] = BRRaw,
    _["rowTrain"] = rowTrain,
    _["rank"] = rank,
    _["yRanked"] = yRanked
   );
   leaf.attr("class") = "LeafReg";
   
-  return leaf;
-}
-
-
-/**
-   @brief Wraps core (classification) Leaf vectors for reference by front end.
- */
-RcppExport SEXP LeafWrapCtg(const std::vector<unsigned int> &leafOrigin, const std::vector<LeafNode> &leafNode, const std::vector<BagRow> &bagRow, unsigned int rowTrain, const std::vector<double> &weight, const CharacterVector &levels) {
-  List leaf = List::create(
-   _["origin"] = leafOrigin,	
-   _["node"] = leafNode,
-   _["bagRow"] = bagRow,
-   _["rowTrain"] = rowTrain,
-   _["weight"] = weight,
-   _["levels"] = levels
-   );
-  leaf.attr("class") = "LeafCtg";
-
   return leaf;
 }
 
@@ -591,17 +620,63 @@ RcppExport SEXP LeafWrapCtg(const std::vector<unsigned int> &leafOrigin, const s
 
    @return void, with output reference parameters.
  */
-void LeafUnwrapReg(SEXP sLeaf, std::vector<double> &_yRanked, std::vector<unsigned int> &_leafOrigin, std::vector<LeafNode> *&_leafNode, std::vector<BagRow> *&_bagRow, unsigned int &_rowTrain, std::vector<unsigned int> &_rank) {
+void RcppLeaf::UnwrapReg(SEXP sLeaf, std::vector<double> &_yRanked, std::vector<unsigned int> &_leafOrigin, std::vector<LeafNode> &_leafNode, std::vector<BagRow> &_bagRow, unsigned int &_rowTrain, std::vector<unsigned int> &_rank) {
   List leaf(sLeaf);
   if (!leaf.inherits("LeafReg"))
     stop("Expecting LeafReg");
 
+  // Deserializes:
+  //
+  RawVector leafRaw = leaf["node"];
+  unsigned int rawSize = leafRaw.length();
+  std::vector<LeafNode> leafNode(rawSize / sizeof(LeafNode));
+  for (unsigned int i = 0; i < rawSize; i++) {
+    ((unsigned char*) &leafNode[0])[i] = leafRaw[i];
+  }
+  
+  RawVector BRRaw = leaf["bagRow"];
+  unsigned int BRSize = BRRaw.length();
+  std::vector<BagRow> bagRow(BRSize / sizeof(BagRow));
+  for (unsigned int i = 0; i < BRSize; i++) {
+    ((unsigned char*) &bagRow[0])[i] = BRRaw[i];
+  }
+  
   _yRanked = as<std::vector<double> >(leaf["yRanked"]);
   _leafOrigin = as<std::vector<unsigned int>>(leaf["origin"]);
-  _leafNode = as<std::vector<LeafNode> *>(leaf["node"]);
-  _bagRow = as<std::vector<BagRow> *>(leaf["bagRow"]);
+  _leafNode = std::move(leafNode);
+  _bagRow = std::move(bagRow);
   _rowTrain = as<unsigned int>(leaf["rowTrain"]);
   _rank = as<std::vector<unsigned int> >(leaf["rank"]);
+}
+
+
+/**
+   @brief Wraps core (classification) Leaf vectors for reference by front end.
+ */
+SEXP RcppLeaf::WrapCtg(const std::vector<unsigned int> &leafOrigin, const std::vector<LeafNode> &leafNode, const std::vector<BagRow> &bagRow, unsigned int rowTrain, const std::vector<double> &weight, const CharacterVector &levels) {
+  unsigned int rawSize = leafNode.size() * sizeof(LeafNode);
+  RawVector leafRaw(rawSize);
+  for (unsigned int i = 0; i < rawSize; i++) {
+    leafRaw[i] = ((unsigned char*) &leafNode[0])[i];
+  }
+
+  unsigned int BRSize = bagRow.size() * sizeof(BagRow);
+  RawVector BRRaw(BRSize);
+  for (unsigned int i = 0; i < BRSize; i++) {
+    BRRaw[i] = ((unsigned char*) &bagRow[0])[i];
+  }
+
+  List leaf = List::create(
+   _["origin"] = leafOrigin,	
+   _["node"] = leafRaw,
+   _["bagRow"] = BRRaw,
+   _["rowTrain"] = rowTrain,
+   _["weight"] = weight,
+   _["levels"] = levels
+   );
+  leaf.attr("class") = "LeafCtg";
+
+  return leaf;
 }
 
 
@@ -616,14 +691,28 @@ void LeafUnwrapReg(SEXP sLeaf, std::vector<double> &_yRanked, std::vector<unsign
 
    @return void, with output reference parameters.
  */
-void LeafUnwrapCtg(SEXP sLeaf, std::vector<unsigned int> &_leafOrigin, std::vector<LeafNode> *&_leafNode, std::vector<BagRow> *&_bagRow, unsigned int &_rowTrain, std::vector<double> &_weight, CharacterVector &_levels) {
+void RcppLeaf::UnwrapCtg(SEXP sLeaf, std::vector<unsigned int> &_leafOrigin, std::vector<LeafNode> &_leafNode, std::vector<BagRow> &_bagRow, unsigned int &_rowTrain, std::vector<double> &_weight, CharacterVector &_levels) {
   List leaf(sLeaf);
   if (!leaf.inherits("LeafCtg")) {
     stop("Expecting LeafCtg");
   }
+  RawVector leafRaw = leaf["node"];
+  unsigned int rawSize = leafRaw.length();
+  std::vector<LeafNode> leafNode(rawSize / sizeof(LeafNode));
+  for (unsigned int i = 0; i < rawSize; i++) {
+    ((unsigned char*) &leafNode[0])[i] = leafRaw[i];
+  }
+  
+  RawVector BRRaw = leaf["bagRow"];
+  unsigned int BRSize = BRRaw.length();
+  std::vector<BagRow> bagRow(BRSize / sizeof(BagRow));
+  for (unsigned int i = 0; i < BRSize; i++) {
+    ((unsigned char*) &bagRow[0])[i] = BRRaw[i];
+  }
+  
   _leafOrigin = as<std::vector<unsigned int> >(leaf["origin"]);
-  _leafNode = as<std::vector<LeafNode> *>(leaf["node"]);
-  _bagRow = as<std::vector<BagRow> *>(leaf["bagRow"]);
+  _leafNode = move(leafNode);
+  _bagRow = move(bagRow);
   _rowTrain = as<unsigned int>(leaf["rowTrain"]);
   _weight = as<std::vector<double> >(leaf["weight"]);
   _levels = as<CharacterVector>((SEXP) leaf["levels"]);
@@ -653,15 +742,12 @@ void LeafUnwrapCtg(SEXP sLeaf, std::vector<unsigned int> &_leafOrigin, std::vect
    @author Mark Seligman
 */
 
-#include "rowrank.h"
 // Testing only:
 //#include <iostream>
 
-#include <Rcpp.h>
-using namespace Rcpp;
+#include "rcppPredblock.h"
+#include "rowrank.h"
 
-
-void FactorRemap(IntegerMatrix &xFac, List &level, List &levelTrain);
 
 /**
   @brief Extracts contents of a data frame into numeric and (zero-based) factor blocks.  Can be quite slow for large predictor counts, as a linked list is being walked.
@@ -684,14 +770,14 @@ RcppExport SEXP RcppPredBlockFrame(SEXP sX, SEXP sNumElt, SEXP sFacElt, SEXP sLe
   DataFrame xf(sX);
   IntegerVector numElt = IntegerVector(sNumElt) - 1;
   IntegerVector facElt = IntegerVector(sFacElt) - 1;
-  IntegerVector levels(sLevels);
-  int nRow = xf.nrows();
-  int nPredFac = facElt.length();
-  int nPredNum = numElt.length();
-  int nPred = nPredFac + nPredNum;
+  std::vector<unsigned int> levels = as<std::vector<unsigned int> >(sLevels);
+  unsigned int nRow = xf.nrows();
+  unsigned int nPredFac = facElt.length();
+  unsigned int nPredNum = numElt.length();
+  unsigned int nPred = nPredFac + nPredNum;
 
   IntegerVector predMap(nPred);
-  IntegerVector facCard;
+  IntegerVector facCard(0);
   IntegerMatrix xFac;
   NumericMatrix xNum;
   if (nPredNum > 0) {
@@ -700,19 +786,18 @@ RcppExport SEXP RcppPredBlockFrame(SEXP sX, SEXP sNumElt, SEXP sFacElt, SEXP sLe
   else
     xNum = NumericMatrix(0, 0);
   if (nPredFac > 0) {
-    facCard = IntegerVector(nPredFac); // Compressed factor vector.
+    facCard = IntegerVector(nPredFac);
     xFac = IntegerMatrix(nRow, nPredFac);
   }
   else {
-    facCard = IntegerVector(0);
     xFac = IntegerMatrix(0);
   }
 
   int numIdx = 0;
   int facIdx = 0;
   List level(nPredFac);
-  for (int feIdx = 0; feIdx < nPred; feIdx++) {
-    int card = levels[feIdx];
+  for (unsigned int feIdx = 0; feIdx < nPred; feIdx++) {
+    unsigned int card = levels[feIdx];
     if (card == 0) {
       xNum(_, numIdx) = as<NumericVector>(xf[feIdx]);
       predMap[numIdx++] = feIdx;
@@ -734,7 +819,7 @@ RcppExport SEXP RcppPredBlockFrame(SEXP sX, SEXP sNumElt, SEXP sFacElt, SEXP sLe
       stop("Signature mismatch");
 
     List levelTrain(as<List>(sigTrain["level"]));
-    FactorRemap(xFac, level, levelTrain);
+    RcppPredblock::FactorRemap(xFac, level, levelTrain);
   }
   List signature = List::create(
         _["predMap"] = predMap,
@@ -759,7 +844,7 @@ RcppExport SEXP RcppPredBlockFrame(SEXP sX, SEXP sNumElt, SEXP sFacElt, SEXP sLe
 }
 
 
-void FactorRemap(IntegerMatrix &xFac, List &levelTest, List &levelTrain) {
+void RcppPredblock::FactorRemap(IntegerMatrix &xFac, List &levelTest, List &levelTrain) {
   for (int col = 0; col < xFac.ncol(); col++) {
     CharacterVector colTest(as<CharacterVector>(levelTest[col]));
     CharacterVector colTrain(as<CharacterVector>(levelTrain[col]));
@@ -792,7 +877,8 @@ RcppExport SEXP RcppPredBlockNum(SEXP sX) {
       _["level"] = List::create(0)
   );
   signature.attr("class") = "Signature";
-  
+
+  IntegerVector facCard(0);
   List predBlock = List::create(
 	_["colNames"] = colnames(blockNum),
 	_["rowNames"] = rownames(blockNum),
@@ -801,7 +887,7 @@ RcppExport SEXP RcppPredBlockNum(SEXP sX) {
         _["blockFac"] = IntegerMatrix(0),
 	_["nPredFac"] = 0,
 	_["nRow"] = blockNum.nrow(),
-        _["facCard"] = IntegerVector(0),
+        _["facCard"] = facCard,
 	_["signature"] = signature
       );
   predBlock.attr("class") = "PredBlock";
@@ -813,14 +899,14 @@ RcppExport SEXP RcppPredBlockNum(SEXP sX) {
 /**
    @brief Unwraps field values useful for prediction.
  */
-void PredblockUnwrap(SEXP sPredBlock, int &_nRow, int &_nPredNum, int &_nPredFac, NumericMatrix &_blockNum, IntegerMatrix &_blockFac) {
+void RcppPredblock::Unwrap(SEXP sPredBlock, unsigned int &_nRow, unsigned int &_nPredNum, unsigned int &_nPredFac, NumericMatrix &_blockNum, IntegerMatrix &_blockFac) {
   List predBlock(sPredBlock);
   if (!predBlock.inherits("PredBlock"))
     stop("Expecting PredBlock");
   
-  _nRow = as<int>((SEXP) predBlock["nRow"]);
-  _nPredFac = as<int>((SEXP) predBlock["nPredFac"]);
-  _nPredNum = as<int>((SEXP) predBlock["nPredNum"]);
+  _nRow = as<unsigned int>((SEXP) predBlock["nRow"]);
+  _nPredFac = as<unsigned int>((SEXP) predBlock["nPredFac"]);
+  _nPredNum = as<unsigned int>((SEXP) predBlock["nPredNum"]);
   _blockNum = as<NumericMatrix>((SEXP) predBlock["blockNum"]);
   _blockFac = as<IntegerMatrix>((SEXP) predBlock["blockFac"]);
 }
@@ -829,7 +915,7 @@ void PredblockUnwrap(SEXP sPredBlock, int &_nRow, int &_nPredNum, int &_nPredFac
 /**
    @brief Unwraps field values useful for export.
  */
-void SignatureUnwrap(SEXP sSignature, IntegerVector &_predMap, List &_level) {
+void RcppPredblock::SignatureUnwrap(SEXP sSignature, IntegerVector &_predMap, List &_level) {
   List signature(sSignature);
   if (!signature.inherits("Signature"))
     stop("Expecting Signature");
@@ -894,13 +980,9 @@ double MSE(const double yValid[], NumericVector y, double &rsq) {
     double error = yValid[i] - y[i];
     sse += error * error;
   }
+  rsq = 1.0 - sse / (var(y) * (y.length() - 1.0));
 
-  // TODO:  Repair assumption that every row sampled.
-
-  double mse = sse / y.length();
-  rsq = 1.0 - (mse * y.length()) / (var(y) * (y.length() - 1.0));
-
-  return mse;
+  return sse / y.length();
 }
 
 
@@ -910,25 +992,25 @@ double MSE(const double yValid[], NumericVector y, double &rsq) {
    @return Wrapped zero, with copy-out parameters.
  */
 RcppExport SEXP RcppPredictReg(SEXP sPredBlock, SEXP sForest, SEXP sLeaf, SEXP sYTest, bool bag) {
-  int nPredNum, nPredFac, nRow;
+  unsigned int nPredNum, nPredFac, nRow;
   NumericMatrix blockNum;
   IntegerMatrix blockFac;
-  PredblockUnwrap(sPredBlock, nRow, nPredNum, nPredFac, blockNum, blockFac);
+  RcppPredblock::Unwrap(sPredBlock, nRow, nPredNum, nPredFac, blockNum, blockFac);
 
   std::vector<unsigned int> origin, facOrig, facSplit;
-  std::vector<ForestNode> *forestNode;
-  ForestUnwrap(sForest, origin, facOrig, facSplit, forestNode);
+  std::vector<ForestNode> forestNode;
+  RcppForest::Unwrap(sForest, origin, facOrig, facSplit, forestNode);
   
   std::vector<double> yRanked;
   std::vector<unsigned int> leafOrigin;
-  std::vector<LeafNode> *leafNode;
-  std::vector<BagRow> *bagRow;
+  std::vector<LeafNode> leafNode;
+  std::vector<BagRow> bagRow;
   unsigned int rowTrain;
   std::vector<unsigned int> rank;
-  LeafUnwrapReg(sLeaf, yRanked, leafOrigin, leafNode, bagRow, rowTrain, rank);
+  RcppLeaf::UnwrapReg(sLeaf, yRanked, leafOrigin, leafNode, bagRow, rowTrain, rank);
 
   std::vector<double> yPred(nRow);
-  Predict::Regression(nPredNum > 0 ? transpose(blockNum).begin() : 0, nPredFac > 0 ? transpose(blockFac).begin() : 0, nPredNum, nPredFac, *forestNode, origin, facOrig, facSplit, leafOrigin, *leafNode, *bagRow, rank, yPred, bag ? rowTrain : 0);
+  Predict::Regression(nPredNum > 0 ? transpose(blockNum).begin() : 0, nPredFac > 0 ? transpose(blockFac).begin() : 0, nPredNum, nPredFac, forestNode, origin, facOrig, facSplit, leafOrigin, leafNode, bagRow, rank, yRanked, yPred, bag ? rowTrain : 0);
 
   List prediction;
   if (Rf_isNull(sYTest)) { // Prediction
@@ -944,7 +1026,7 @@ RcppExport SEXP RcppPredictReg(SEXP sPredBlock, SEXP sForest, SEXP sLeaf, SEXP s
     double mse = MSE(&yPred[0], yTest, rsq);
     prediction = List::create(
 			 _["yPred"] = yPred,
-			 _["mse "]= mse,
+			 _["mse"] = mse,
 			 _["rsq"] = rsq,
 			 _["qPred"] = NumericMatrix(0)
 		     );
@@ -971,22 +1053,22 @@ RcppExport SEXP RcppTestReg(SEXP sPredBlock, SEXP sForest, SEXP sLeaf, SEXP sYTe
    @return Prediction list.
  */
 RcppExport SEXP RcppPredictCtg(SEXP sPredBlock, SEXP sForest, SEXP sLeaf, SEXP sYTest, bool bag, bool doProb) {
-  int nPredNum, nPredFac, nRow;
+  unsigned int nPredNum, nPredFac, nRow;
   NumericMatrix blockNum;
   IntegerMatrix blockFac;
-  PredblockUnwrap(sPredBlock, nRow, nPredNum, nPredFac, blockNum, blockFac);
+  RcppPredblock::Unwrap(sPredBlock, nRow, nPredNum, nPredFac, blockNum, blockFac);
     
   std::vector<unsigned int> origin, facOrig, facSplit;
-  std::vector<ForestNode> *forestNode;
-  ForestUnwrap(sForest, origin, facOrig, facSplit, forestNode);
+  std::vector<ForestNode> forestNode;
+  RcppForest::Unwrap(sForest, origin, facOrig, facSplit, forestNode);
 
   std::vector<unsigned int> leafOrigin;
-  std::vector<LeafNode> *leafNode;
-  std::vector<BagRow> *bagRow;
+  std::vector<LeafNode> leafNode;
+  std::vector<BagRow> bagRow;
   unsigned int rowTrain;
   std::vector<double> weight;
   CharacterVector levelsTrain;
-  LeafUnwrapCtg(sLeaf, leafOrigin, leafNode, bagRow, rowTrain, weight, levelsTrain);
+  RcppLeaf::UnwrapCtg(sLeaf, leafOrigin, leafNode, bagRow, rowTrain, weight, levelsTrain);
 
   unsigned int ctgWidth = levelsTrain.length();
   bool validate = !Rf_isNull(sYTest);
@@ -1033,7 +1115,7 @@ RcppExport SEXP RcppPredictCtg(SEXP sPredBlock, SEXP sForest, SEXP sLeaf, SEXP s
   IntegerVector censusCore = IntegerVector(nRow * ctgWidth);
   std::vector<int> yPred(nRow);
   NumericVector probCore = doProb ? NumericVector(nRow * ctgWidth) : NumericVector(0);
-  Predict::Classification(nPredNum > 0 ? transpose(blockNum).begin() : 0, nPredFac > 0 ? transpose(blockFac).begin() : 0, nPredNum, nPredFac, *forestNode, origin, facOrig, facSplit, leafOrigin, *leafNode, *bagRow, weight, yPred, censusCore.begin(), testCore, validate ? confCore.begin() : 0, misPredCore, doProb ? probCore.begin() : 0, bag ? rowTrain : 0);
+  Predict::Classification(nPredNum > 0 ? transpose(blockNum).begin() : 0, nPredFac > 0 ? transpose(blockFac).begin() : 0, nPredNum, nPredFac, forestNode, origin, facOrig, facSplit, leafOrigin, leafNode, bagRow, weight, yPred, censusCore.begin(), testCore, validate ? confCore.begin() : 0, misPredCore, doProb ? probCore.begin() : 0, bag ? rowTrain : 0);
 
   List predBlock(sPredBlock);
   IntegerMatrix census = transpose(IntegerMatrix(ctgWidth, nRow, censusCore.begin()));
@@ -1043,7 +1125,7 @@ RcppExport SEXP RcppPredictCtg(SEXP sPredBlock, SEXP sForest, SEXP sLeaf, SEXP s
     prob.attr("dimnames") = List::create(predBlock["rowNames"], levelsTrain);
   }
 
-  for (int i = 0; i < nRow; i++) // Bases to unity for front end.
+  for (unsigned int i = 0; i < nRow; i++) // Bases to unity for front end.
     yPred[i] = yPred[i] + 1;
 
   List prediction;
@@ -1154,27 +1236,27 @@ RcppExport SEXP RcppTestProb(SEXP sPredBlock, SEXP sForest, SEXP sLeaf, SEXP sYT
    @return Prediction list.
 */
 RcppExport SEXP RcppPredictQuant(SEXP sPredBlock, SEXP sForest, SEXP sLeaf, SEXP sQuantVec, SEXP sQBin, SEXP sYTest, bool bag) {
-  int nPredNum, nPredFac, nRow;
+  unsigned int nPredNum, nPredFac, nRow;
   NumericMatrix blockNum;
   IntegerMatrix blockFac;
-  PredblockUnwrap(sPredBlock, nRow, nPredNum, nPredFac, blockNum, blockFac);
+  RcppPredblock::Unwrap(sPredBlock, nRow, nPredNum, nPredFac, blockNum, blockFac);
     
   std::vector<unsigned int> origin, facOrig, facSplit;
-  std::vector<ForestNode> *forestNode;
-  ForestUnwrap(sForest, origin, facOrig, facSplit, forestNode);
+  std::vector<ForestNode> forestNode;
+  RcppForest::Unwrap(sForest, origin, facOrig, facSplit, forestNode);
 
   std::vector<double> yRanked;
   std::vector<unsigned int> leafOrigin;
-  std::vector<LeafNode> *leafNode;
-  std::vector<BagRow> *bagRow;
+  std::vector<LeafNode> leafNode;
+  std::vector<BagRow> bagRow;
   unsigned int rowTrain;
   std::vector<unsigned int> rank;
-  LeafUnwrapReg(sLeaf, yRanked, leafOrigin, leafNode, bagRow, rowTrain, rank);
+  RcppLeaf::UnwrapReg(sLeaf, yRanked, leafOrigin, leafNode, bagRow, rowTrain, rank);
 
   std::vector<double> yPred(nRow);
   std::vector<double> quantVecCore(as<std::vector<double> >(sQuantVec));
   std::vector<double> qPredCore(nRow * quantVecCore.size());
-  Predict::Quantiles(nPredNum > 0 ? transpose(blockNum).begin() : 0, nPredFac > 0 ? transpose(blockFac).begin() : 0, nPredNum, nPredFac, *forestNode, origin, facOrig, facSplit, leafOrigin, *leafNode, *bagRow, rank, yRanked, yPred, quantVecCore, as<int>(sQBin), qPredCore,  bag ? rowTrain : 0);
+  Predict::Quantiles(nPredNum > 0 ? transpose(blockNum).begin() : 0, nPredFac > 0 ? transpose(blockFac).begin() : 0, nPredNum, nPredFac, forestNode, origin, facOrig, facSplit, leafOrigin, leafNode, bagRow, rank, yRanked, yPred, quantVecCore, as<int>(sQBin), qPredCore,  bag ? rowTrain : 0);
 
   NumericMatrix qPred(transpose(NumericMatrix(quantVecCore.size(), nRow, qPredCore.begin())));
   List prediction;
@@ -1235,11 +1317,10 @@ RcppExport SEXP RcppTestQuant(SEXP sPredBlock, SEXP sForest, SEXP sLeaf, SEXP sQ
 */
 
 #include <Rcpp.h>
-
 #include "rowrank.h"
+
 // Testing only:
 //#include <iostream>
-
 
 using namespace Rcpp;
 using namespace std;
@@ -1261,17 +1342,22 @@ RcppExport SEXP RcppRowRank(SEXP sPredBlock) {
   unsigned int nPredNum = as<unsigned int>(predBlock["nPredNum"]);
   unsigned int nPredFac = as<unsigned int>(predBlock["nPredFac"]);
   unsigned int nPred = nPredNum + nPredFac;
-  IntegerVector rank = IntegerVector(nRow * nPred);
-  IntegerVector row = IntegerVector(nRow * nPred);
-  IntegerVector invNum = 0;
+  IntegerMatrix rank(nRow, nPred);
+  IntegerMatrix row(nRow, nPred);
+  IntegerMatrix invNum;
   if (nPredNum > 0) {
-    invNum = IntegerVector(nRow * nPredNum);
-    NumericMatrix blockNum(as<NumericMatrix>(predBlock["blockNum"]));
-    RowRank::PreSortNum(blockNum.begin(), nPredNum, nRow, row.begin(), rank.begin(), invNum.begin());
+    invNum = IntegerMatrix(nRow, nPredNum);
+    NumericMatrix blockNum = predBlock["blockNum"];
+    RowRank::PreSortNum(blockNum.begin(), nPredNum, nRow, (unsigned int *) row.begin(), (unsigned int*) rank.begin(), (unsigned int *) invNum.begin());
   }
+  else {
+    invNum = IntegerMatrix(0,0);
+  }
+
   if (nPredFac > 0) {
-    IntegerMatrix blockFac(as<IntegerMatrix>(predBlock["blockFac"]));
-    RowRank::PreSortFac(blockFac.begin(), nPredNum, nPredFac, nRow, row.begin(), rank.begin());
+    unsigned int facStart = nPredNum * nRow;
+    IntegerMatrix blockFac = predBlock["blockFac"];
+    RowRank::PreSortFac((unsigned int*) blockFac.begin(), nPredFac, nRow, (unsigned int*) &row[facStart], (unsigned int*) &rank[facStart]);
   }
   
   List rowRank = List::create(
@@ -1378,28 +1464,19 @@ RcppExport SEXP RcppTrainCtg(SEXP sPredBlock, SEXP sRowRank, SEXP sYOneBased, SE
     stop("Expecting RowRank");
 
   unsigned int nRow = as<unsigned int>(predBlock["nRow"]);
-  int nPredNum = as<int>(predBlock["nPredNum"]);
-  int nPredFac = as<int>(predBlock["nPredFac"]);
-  double *feNum = 0;
-  int *feInvNum = 0;
-  if (nPredNum > 0) {
-    NumericMatrix xNum(as<NumericMatrix>(predBlock["blockNum"]));
-    feNum = xNum.begin();
-    IntegerVector invNum(as<IntegerVector>(rowRank["invNum"]));
-    feInvNum = invNum.begin();
-  }
-  int *feFacCard = 0;
-  int cardMax = 0;
-  if (nPredFac > 0) {
-    IntegerVector facCard(as<IntegerVector>(predBlock["facCard"]));
-    feFacCard = facCard.begin();
-    cardMax = max(facCard);
-  }
+  unsigned int nPredNum = as<unsigned int>(predBlock["nPredNum"]);
+  unsigned int nPredFac = as<unsigned int>(predBlock["nPredFac"]);
+  NumericMatrix xNum(as<NumericMatrix>(predBlock["blockNum"]));
+  IntegerMatrix feInvNum(as<IntegerMatrix>(rowRank["invNum"]));
+
+  IntegerVector facCard(as<IntegerVector>(predBlock["facCard"]));
+  unsigned int cardMax = nPredFac > 0 ? max(facCard) : 0;
+
   List signature(as<List>(predBlock["signature"]));
   IntegerVector predMap(as<IntegerVector>(signature["predMap"]));
 
-  IntegerVector feRow(as<IntegerVector>(rowRank["row"]));
-  IntegerVector feRank(as<IntegerVector>(rowRank["rank"]));
+  IntegerMatrix feRow = as<IntegerMatrix>(rowRank["row"]);
+  IntegerMatrix feRank = as<IntegerMatrix>(rowRank["rank"]);
 
   IntegerVector yOneBased(sYOneBased);
   CharacterVector levels(yOneBased.attr("levels"));
@@ -1410,13 +1487,13 @@ RcppExport SEXP RcppTrainCtg(SEXP sPredBlock, SEXP sRowRank, SEXP sYOneBased, SE
   NumericVector classWeight(as<NumericVector>(sClassWeight));
   RcppProxyCtg(y, classWeight, proxy);
 
-  int nTree = as<int>(sNTree);
+  unsigned int nTree = as<unsigned int>(sNTree);
   NumericVector sampleWeight(as<NumericVector>(sSampleWeight));
 
-  int nPred = nPredNum + nPredFac;
+  unsigned int nPred = nPredNum + nPredFac;
   NumericVector predProb = NumericVector(sProbVec)[predMap];
 
-  Train::Init(feNum, feFacCard, cardMax, nPredNum, nPredFac, nRow, nTree, as<int>(sNSamp), sampleWeight.begin(), as<bool>(sWithRepl), as<int>(sTrainBlock), as<int>(sMinNode), as<double>(sMinRatio), as<int>(sTotLevels), ctgWidth, as<int>(sPredFixed), predProb.begin());
+  Train::Init(xNum.begin(), (unsigned int*) facCard.begin(), cardMax, nPredNum, nPredFac, nRow, nTree, as<unsigned int>(sNSamp), sampleWeight.begin(), as<bool>(sWithRepl), as<unsigned int>(sTrainBlock), as<unsigned int>(sMinNode), as<double>(sMinRatio), as<unsigned int>(sTotLevels), ctgWidth, as<unsigned int>(sPredFixed), predProb.begin());
 
   std::vector<unsigned int> origin(nTree);
   std::vector<unsigned int> facOrig(nTree);
@@ -1424,17 +1501,17 @@ RcppExport SEXP RcppTrainCtg(SEXP sPredBlock, SEXP sRowRank, SEXP sYOneBased, SE
   NumericVector predInfo(nPred);
 
   std::vector<ForestNode> forestNode;
-
   std::vector<unsigned int> facSplit;
   std::vector<LeafNode> leafNode;
   std::vector<BagRow> bagRow;
   std::vector<double> weight;
 
-  Train::Classification(feRow.begin(), feRank.begin(), feInvNum, as<std::vector<unsigned int> >(y), ctgWidth, proxy, origin, facOrig, predInfo.begin(), forestNode, facSplit, leafOrigin, leafNode, bagRow, weight);
+  Train::Classification((unsigned int*) feRow.begin(), (unsigned int*) feRank.begin(), (unsigned int*) feInvNum.begin(), as<std::vector<unsigned int> >(y), ctgWidth, proxy, origin, facOrig, predInfo.begin(), forestNode, facSplit, leafOrigin, leafNode, bagRow, weight);
+
 
   return List::create(
-      _["forest"] = ForestWrap(origin, facOrig, facSplit, forestNode),
-      _["leaf"] = LeafWrapCtg(leafOrigin, leafNode, bagRow, nRow, weight, CharacterVector(yOneBased.attr("levels"))),
+      _["forest"] = RcppForest::Wrap(origin, facOrig, facSplit, forestNode),
+      _["leaf"] = RcppLeaf::WrapCtg(leafOrigin, leafNode, bagRow, nRow, weight, CharacterVector(yOneBased.attr("levels"))),
       _["predInfo"] = predInfo[predMap] // Maps back from core order.
   );
 }
@@ -1450,37 +1527,28 @@ RcppExport SEXP RcppTrainReg(SEXP sPredBlock, SEXP sRowRank, SEXP sY, SEXP sNTre
     stop("Expecting RowRank");
 
   unsigned int nRow = as<unsigned int>(predBlock["nRow"]);
-  int nPredNum = as<int>(predBlock["nPredNum"]);
-  int nPredFac = as<int>(predBlock["nPredFac"]);
-  double *feNum = 0;
-  int *feInvNum = 0;
-  if (nPredNum > 0) {
-    NumericMatrix xNum(as<NumericMatrix>(predBlock["blockNum"]));
-    feNum = xNum.begin();
-    IntegerVector invNum(as<IntegerVector>(rowRank["invNum"]));
-    feInvNum = invNum.begin();
-  }
-  int *feFacCard = 0;
-  int cardMax = 0;
-  if (nPredFac > 0) {
-    IntegerVector facCard(as<IntegerVector>(predBlock["facCard"]));
-    feFacCard = facCard.begin();
-    cardMax = max(facCard);
-  }
+  unsigned int nPredNum = as<unsigned int>(predBlock["nPredNum"]);
+  unsigned int nPredFac = as<unsigned int>(predBlock["nPredFac"]);
+  NumericMatrix xNum(as<NumericMatrix>(predBlock["blockNum"]));
+  IntegerMatrix feInvNum(as<IntegerMatrix>(rowRank["invNum"]));
+
+  IntegerVector facCard(as<IntegerVector>(predBlock["facCard"]));
+  unsigned int cardMax = nPredFac > 0 ? max(facCard) : 0;
+
   List signature(as<List>(predBlock["signature"]));
   IntegerVector predMap(as<IntegerVector>(signature["predMap"]));
   
-  int nTree = as<int>(sNTree);
+  unsigned int nTree = as<unsigned int>(sNTree);
   NumericVector sampleWeight(as<NumericVector>(sSampleWeight));
 
-  int nPred = nPredNum + nPredFac;
+  unsigned int nPred = nPredNum + nPredFac;
   NumericVector predProb = NumericVector(sProbVec)[predMap];
   NumericVector regMono = NumericVector(sRegMono)[predMap];
   
-  Train::Init(feNum, feFacCard, cardMax, nPredNum, nPredFac, nRow, nTree, as<int>(sNSamp), sampleWeight.begin(), as<bool>(sWithRepl), as<int>(sTrainBlock), as<int>(sMinNode), as<double>(sMinRatio), as<int>(sTotLevels), 0, as<int>(sPredFixed), predProb.begin(), regMono.begin());
+  Train::Init(xNum.begin(), (unsigned int*) facCard.begin(), cardMax, nPredNum, nPredFac, nRow, nTree, as<unsigned int>(sNSamp), sampleWeight.begin(), as<bool>(sWithRepl), as<unsigned int>(sTrainBlock), as<unsigned int>(sMinNode), as<double>(sMinRatio), as<unsigned int>(sTotLevels), 0, as<unsigned int>(sPredFixed), predProb.begin(), regMono.begin());
 
-  IntegerVector feRow(as<IntegerVector>(rowRank["row"]));
-  IntegerVector feRank(as<IntegerVector>(rowRank["rank"]));
+  IntegerMatrix feRow = as<IntegerMatrix>(rowRank["row"]);
+  IntegerMatrix feRank = as<IntegerMatrix>(rowRank["rank"]);
 
   NumericVector y(sY);
   NumericVector yRanked = clone(y).sort();
@@ -1497,11 +1565,11 @@ RcppExport SEXP RcppTrainReg(SEXP sPredBlock, SEXP sRowRank, SEXP sY, SEXP sNTre
   std::vector<unsigned int> rank;
   std::vector<unsigned int> facSplit;
 
-  Train::Regression(feRow.begin(), feRank.begin(), feInvNum, as<std::vector<double> >(y), as<std::vector<unsigned int> >(row2Rank), origin, facOrig, predInfo.begin(), forestNode, facSplit, leafOrigin, leafNode, bagRow, rank);
+  Train::Regression((unsigned int*) feRow.begin(), (unsigned int*) feRank.begin(), (unsigned int*) feInvNum.begin(), as<std::vector<double> >(y), as<std::vector<unsigned int> >(row2Rank), origin, facOrig, predInfo.begin(), forestNode, facSplit, leafOrigin, leafNode, bagRow, rank);
 
   return List::create(
-      _["forest"] = ForestWrap(origin, facOrig, facSplit, forestNode),
-      _["leaf"] = LeafWrapReg(leafOrigin, leafNode, bagRow, nRow, rank, as<std::vector<double> >(yRanked)),
+      _["forest"] = RcppForest::Wrap(origin, facOrig, facSplit, forestNode),
+      _["leaf"] = RcppLeaf::WrapReg(leafOrigin, leafNode, bagRow, nRow, rank, as<std::vector<double> >(yRanked)),
       _["predInfo"] = predInfo[predMap] // Maps back from core order.
     );
 }

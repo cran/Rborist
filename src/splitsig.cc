@@ -16,8 +16,7 @@
 #include "splitsig.h"
 #include "samplepred.h"
 #include "pretree.h"
-#include "splitpred.h"
-#include "run.h"
+#include "runset.h"
 
 #include <cfloat>
 
@@ -63,8 +62,6 @@ void SplitSig::DeImmutables() {
 /**
    @brief Sets splitting fields for a splitting predictor.
 
-   @param _spPair is the SplitPred pair precipitating the split.
-
    @param _sCount is the count of samples in the LHS.
 
    @param _lhIdxCount is count of indices associated with the LHS.
@@ -73,16 +70,16 @@ void SplitSig::DeImmutables() {
 
    @return void.
  */
-void SplitSig::Write(const SPPair *_spPair, unsigned int _sCount, unsigned int _lhIdxCount, double _info) {
+void SplitSig::Write(unsigned int _levelIdx, unsigned int _predIdx, int _setIdx, unsigned int _bufIdx, unsigned int _sCount, unsigned int _lhIdxCount, double _info) {
   SSNode ssn;
-  ssn.runId = _spPair->RSet();
+  ssn.setIdx = _setIdx;
+  ssn.bufIdx = _bufIdx;
   ssn.sCount = _sCount;
   ssn.lhIdxCount = _lhIdxCount;
   ssn.info = _info;
+  ssn.predIdx = _predIdx;
 
-  int splitIdx; // Dummy.
-  _spPair->Coords(splitIdx, ssn.predIdx);
-  Lookup(splitIdx, ssn.predIdx) = ssn;
+  Lookup(_levelIdx, ssn.predIdx) = ssn;
 }
 
 
@@ -106,8 +103,8 @@ SSNode::SSNode() : info(-DBL_MAX) {
 
    Sacrifices elegance for efficiency, as coprocessor may not support virtual calls.
 */
-double SSNode::NonTerminal(SamplePred *samplePred, PreTree *preTree, SplitPred *splitPred, int level, int start, int end, unsigned int ptId, unsigned int &ptLH, unsigned int &ptRH) {
-  return runId >= 0 ? NonTerminalRun(samplePred, preTree, splitPred->Runs(), level, start, end, ptId, ptLH, ptRH) : NonTerminalNum(samplePred, preTree, level, start, end, ptId, ptLH, ptRH);
+double SSNode::NonTerminal(SamplePred *samplePred, PreTree *preTree, unsigned int splitIdx, int start, int end, unsigned int ptId, unsigned int &ptLH, unsigned int &ptRH, Run *run) {
+  return setIdx >= 0 ? NonTerminalRun(samplePred, preTree, splitIdx, start, end, ptId, ptLH, ptRH, run) : NonTerminalNum(samplePred, preTree, splitIdx, start, end, ptId, ptLH, ptRH);
 }
 
 
@@ -116,20 +113,20 @@ double SSNode::NonTerminal(SamplePred *samplePred, PreTree *preTree, SplitPred *
 
    @return sum of left-hand subnode's response values.
  */
-double SSNode::NonTerminalRun(SamplePred *samplePred, PreTree *preTree, Run *run, int level, int start, int end, unsigned int ptId, unsigned int &ptLH, unsigned int &ptRH) {
+double SSNode::NonTerminalRun(SamplePred *samplePred, PreTree *preTree, unsigned int splitIdx, int start, int end, unsigned int ptId, unsigned int &ptLH, unsigned int &ptRH, Run *run) {
   preTree->NonTerminalFac(info, predIdx, ptId, ptLH, ptRH);
 
   // Replays entire index extent of node with RH pretree index then,
   // where appropriate, overwrites by replaying with LH index in the
   // loop to follow.
-  (void) preTree->Replay(samplePred, predIdx, level, start, end, ptRH);
+  (void) preTree->Replay(samplePred, predIdx, bufIdx, start, end, ptRH);
 
   double lhSum = 0.0;
-  for (int outSlot = 0; outSlot < run->RunsLH(runId); outSlot++) {
-    int runStart, runEnd;
-    unsigned int rank = run->RunBounds(runId, outSlot, runStart, runEnd);
+  for (unsigned int outSlot = 0; outSlot < run->RunsLH(setIdx); outSlot++) {
+    unsigned int runStart, runEnd;
+    unsigned int rank = run->RunBounds(setIdx, outSlot, runStart, runEnd);
     preTree->LHBit(ptId, rank);
-    lhSum += preTree->Replay(samplePred, predIdx, level, runStart, runEnd, ptLH);
+    lhSum += preTree->Replay(samplePred, predIdx, bufIdx, runStart, runEnd, ptLH);
   }
 
   return lhSum;
@@ -141,13 +138,13 @@ double SSNode::NonTerminalRun(SamplePred *samplePred, PreTree *preTree, Run *run
 
    @return sum of LH subnode's sample values.
  */
-double SSNode::NonTerminalNum(SamplePred *samplePred, PreTree *preTree, int level, int start, int end, unsigned int ptId, unsigned int &ptLH, unsigned int &ptRH) {
+double SSNode::NonTerminalNum(SamplePred *samplePred, PreTree *preTree, unsigned int splitIdx, int start, int end, unsigned int ptId, unsigned int &ptLH, unsigned int &ptRH) {
   unsigned int rkLow, rkHigh;
-  samplePred->SplitRanks(predIdx, level, start + lhIdxCount - 1, rkLow, rkHigh);
+  samplePred->SplitRanks(predIdx, bufIdx, start + lhIdxCount - 1, rkLow, rkHigh);
   preTree->NonTerminalNum(info, predIdx, rkLow, rkHigh, ptId, ptLH, ptRH);
   
-  double lhSum = preTree->Replay(samplePred, predIdx, level, start, start + lhIdxCount - 1, ptLH);
-  (void) preTree->Replay(samplePred, predIdx, level, start + lhIdxCount, end, ptRH);
+  double lhSum = preTree->Replay(samplePred, predIdx, bufIdx, start, start + lhIdxCount - 1, ptLH);
+  (void) preTree->Replay(samplePred, predIdx, bufIdx, start + lhIdxCount, end, ptRH);
 
   return lhSum;
 }
@@ -157,19 +154,19 @@ double SSNode::NonTerminalNum(SamplePred *samplePred, PreTree *preTree, int leve
    @brief Walks predictors associated with a given split index to find which,
    if any, maximizes information gain above split's threshold.
 
-   @param splitIdx is the current split index.
+   @param levelIdx is the current split index.
 
    @param gainMax begins as the minimal information gain suitable for spltting this
    index node.
 
    @return void.
  */
-SSNode *SplitSig::ArgMax(int splitIdx, double gainMax) const {
+SSNode *SplitSig::ArgMax(unsigned int levelIdx, double gainMax) const {
   SSNode *argMax = 0;
 
   // TODO: Break ties nondeterministically.
   //
-  int predOff = splitIdx;
+  unsigned int predOff = levelIdx;
   for (unsigned int predIdx = 0; predIdx < nPred; predIdx++, predOff += splitCount) {
     SSNode *candSS = &levelSS[predOff];
     if (candSS->info > gainMax) {

@@ -18,7 +18,7 @@
 #include "callback.h"
 #include "rowrank.h"
 #include "samplepred.h"
-#include "splitpred.h"
+#include "bottom.h"
 #include "forest.h"
 
 //#include <iostream>
@@ -41,7 +41,7 @@ unsigned int SampleCtg::ctgWidth = 0;
 
  @return void.
 */
-void Sample::Immutables(unsigned int _nRow, unsigned int _nPred, int _nSamp, double _feSampleWeight[], bool _withRepl, unsigned int _ctgWidth, int _nTree) {
+void Sample::Immutables(unsigned int _nRow, unsigned int _nPred, int _nSamp, const double _feSampleWeight[], bool _withRepl, unsigned int _ctgWidth, int _nTree) {
   nRow = _nRow;
   nPred = _nPred;
   nSamp = _nSamp;
@@ -91,7 +91,7 @@ Sample::~Sample() {
   delete [] sampleNode;
   delete [] row2Sample;
   delete samplePred;
-  delete splitPred;
+  delete bottom;
 }
 
 
@@ -171,7 +171,7 @@ void SampleReg::Stage(const std::vector<double> &y, const std::vector<unsigned i
   std::fill(ctgProxy.begin(), ctgProxy.end(), 0);
   Sample::PreStage(y, ctgProxy, rowRank);
   SetRank(row2Rank);
-  splitPred = SplitPred::FactoryReg(samplePred);
+  bottom = Bottom::FactoryReg(samplePred, bagCount);
 }
 
 
@@ -214,7 +214,7 @@ SampleCtg::SampleCtg() : Sample() {
 //
 void SampleCtg::Stage(const std::vector<unsigned int> &yCtg, const std::vector<double> &y, const RowRank *rowRank) {
   Sample::PreStage(y, yCtg, rowRank);
-  splitPred = SplitPred::FactoryCtg(samplePred, sampleNode);
+  bottom = Bottom::FactoryCtg(samplePred, sampleNode, bagCount);
 }
 
 
@@ -229,7 +229,7 @@ void SampleCtg::Stage(const std::vector<unsigned int> &yCtg, const std::vector<d
  */
 void Sample::PreStage(const std::vector<double> &y, const std::vector<unsigned int> &yCtg, const RowRank *rowRank) {
   unsigned int *sCountRow = RowSample();
-  unsigned int slotBits = BV::SlotBits();
+  unsigned int slotBits = BV::SlotElts();
 
   bagSum = 0.0;
   int slot = 0;
@@ -267,12 +267,12 @@ void Sample::PreStage(const std::vector<double> &y, const std::vector<unsigned i
    @return void.
  */
 void Sample::PreStage(const RowRank *rowRank) {
-  unsigned int predIdx;
+  int predIdx;
 
 #pragma omp parallel default(shared) private(predIdx)
   {
 #pragma omp for schedule(dynamic, 1)
-    for (predIdx = 0; predIdx < nPred; predIdx++) {
+    for (predIdx = 0; predIdx < int(nPred); predIdx++) {
       PreStage(rowRank, predIdx);
     }
   }
