@@ -21,22 +21,26 @@
 #include "predict.h"
 
 //#include <iostream>
-using namespace std;
+//using namespace std;
+
+
+const double *ForestNode::splitQuant = 0;
 
 
 /**
    @brief Crescent constructor for training.
 */
-Forest::Forest(std::vector<ForestNode> &_forestNode, std::vector<unsigned int> &_origin, std::vector<unsigned int> &_facOrigin, std::vector<unsigned int> &_facVec) : nTree(_origin.size()), forestNode(_forestNode), treeOrigin(_origin), facOrigin(_facOrigin), facVec(_facVec), predict(0) {
-  facSplit = new BVJagged(facVec, _facOrigin);
+ForestTrain::ForestTrain(std::vector<ForestNode> &_forestNode, std::vector<unsigned int> &_origin, std::vector<unsigned int> &_facOrigin, std::vector<unsigned int> &_facVec) : forestNode(_forestNode), treeOrigin(_origin), facOrigin(_facOrigin), facVec(_facVec) {
+}
+
+ForestTrain::~ForestTrain() {
 }
 
 
 /**
    @brief Constructor for prediction.
 */
-Forest::Forest(std::vector<ForestNode> &_forestNode, std::vector<unsigned int> &_origin, std::vector<unsigned int> &_facOrigin, std::vector<unsigned int> &_facVec, Predict *_predict) : nTree(_origin.size()), forestNode(_forestNode), treeOrigin(_origin), facOrigin(_facOrigin), facVec(_facVec), predict(_predict) {
-  facSplit = new BVJagged(facVec, _facOrigin);
+Forest::Forest(const ForestNode _forestNode[], const unsigned int _origin[], unsigned int _nTree, unsigned int _facVec[], size_t _facLen, const unsigned int _facOrigin[], unsigned int _nFac, Predict *_predict) : forestNode(_forestNode), treeOrigin(_origin), nTree(_nTree), facSplit(new BVJagged(_facVec, _facLen, _facOrigin, _nFac)), predict(_predict), predMap(predict->PredMap())  {
 }
 
 
@@ -55,9 +59,9 @@ Forest::~Forest() {
    @return void.
  */
 void Forest::PredictAcross(unsigned int rowStart, unsigned int rowEnd, const class BitMatrix *bag) const {
-  if (PredBlock::NPredFac() == 0)
+  if (predMap->NPredFac() == 0)
     PredictAcrossNum(rowStart, rowEnd, bag);
-  else if (PredBlock::NPredNum() == 0)
+  else if (predMap->NPredNum() == 0)
     PredictAcrossFac(rowStart, rowEnd, bag);
   else
     PredictAcrossMixed(rowStart, rowEnd, bag);
@@ -78,8 +82,8 @@ void Forest::PredictAcrossNum(unsigned int rowStart, unsigned int rowEnd, const 
   {
 #pragma omp for schedule(dynamic, 1)
     for (row = int(rowStart); row < int(rowEnd); row++) {
-    PredictRowNum(row, PBPredict::RowNum(row), row - rowStart, bag);
-  }
+      PredictRowNum(row, predict->RowNum(row - rowStart), row - rowStart, bag);
+    }
   }
 }
 
@@ -98,7 +102,7 @@ void Forest::PredictAcrossFac(unsigned int rowStart, unsigned int rowEnd, const 
   {
 #pragma omp for schedule(dynamic, 1)
     for (row = int(rowStart); row < int(rowEnd); row++) {
-      PredictRowFac(row, PBPredict::RowFac(row), row - rowStart, bag);
+      PredictRowFac(row, predict->RowFac(row - rowStart), row - rowStart, bag);
   }
   }
 
@@ -123,8 +127,8 @@ void Forest::PredictAcrossMixed(unsigned int rowStart, unsigned int rowEnd, cons
   {
 #pragma omp for schedule(dynamic, 1)
     for (row = int(rowStart); row < int(rowEnd); row++) {
-    PredictRowMixed(row, PBPredict::RowNum(row), PBPredict::RowFac(row), row - rowStart, bag);
-  }
+      PredictRowMixed(row, predict->RowNum(row - rowStart), predict->RowFac(row - rowStart), row - rowStart, bag);
+    }
   }
 
 }
@@ -143,23 +147,22 @@ void Forest::PredictAcrossMixed(unsigned int rowStart, unsigned int rowEnd, cons
  */
 
 void Forest::PredictRowNum(unsigned int row, const double rowT[], unsigned int blockRow, const class BitMatrix *bag) const {
-  for (int tc = 0; tc < nTree; tc++) {
-    if (bag->TestBit(row, tc)) {
-      predict->BagIdx(blockRow, tc);
+  for (unsigned int tIdx = 0; tIdx < NTree(); tIdx++) {
+    if (bag->TestBit(row, tIdx)) {
+      predict->BagIdx(blockRow, tIdx);
       continue;
     }
 
-    unsigned int treeBase = treeOrigin[tc];
-    unsigned int idx = 0;
+    unsigned int idx = treeOrigin[tIdx];
     unsigned int bump;
     unsigned int pred; // N.B.:  Use BlockIdx() if numericals not numbered from 0.
     double num;
-    forestNode[treeBase].Ref(pred, bump, num);
+    Ref(idx, pred, bump, num);
     while (bump != 0) {
       idx += (rowT[pred] <= num ? bump : bump + 1);
-      forestNode[treeBase + idx].Ref(pred, bump, num);
+      Ref(idx, pred, bump, num);
     }
-    predict->LeafIdx(blockRow, tc, pred);
+    predict->LeafIdx(blockRow, tIdx, pred);
   }
 }
 
@@ -175,26 +178,24 @@ void Forest::PredictRowNum(unsigned int row, const double rowT[], unsigned int b
 
    @return Void with output vector parameter.
  */
-void Forest::PredictRowFac(unsigned int row, const int rowT[], unsigned int blockRow, const class BitMatrix *bag) const {
-  int tc;
-  for (tc = 0; tc < nTree; tc++) {
-    if (bag->TestBit(row, tc)) {
-      predict->BagIdx(blockRow, tc);
+void Forest::PredictRowFac(unsigned int row, const unsigned int rowT[], unsigned int blockRow, const class BitMatrix *bag) const {
+  for (unsigned int tIdx = 0; tIdx < NTree(); tIdx++) {
+    if (bag->TestBit(row, tIdx)) {
+      predict->BagIdx(blockRow, tIdx);
       continue;
     }
 
-    unsigned int treeBase = treeOrigin[tc];
-    unsigned int idx = 0;
+    unsigned int idx = treeOrigin[tIdx];
     unsigned int bump;
     unsigned int pred; // N.B.: Use BlockIdx() if not factor-only (zero based).
     double num;
-    forestNode[treeBase].Ref(pred, bump, num);
+    Ref(idx, pred, bump, num);
     while (bump != 0) {
       unsigned int bitOff = (unsigned int) num + rowT[pred];
-      idx += facSplit->TestBit(tc, bitOff) ? bump : bump + 1;
-      forestNode[treeBase + idx].Ref(pred, bump, num);
+      idx += facSplit->TestBit(tIdx, bitOff) ? bump : bump + 1;
+      Ref(idx, pred, bump, num);
     }
-    predict->LeafIdx(blockRow, tc, pred);
+    predict->LeafIdx(blockRow, tIdx, pred);
   }
 }
 
@@ -212,34 +213,32 @@ void Forest::PredictRowFac(unsigned int row, const int rowT[], unsigned int bloc
 
    @return Void with output vector parameter.
  */
-void Forest::PredictRowMixed(unsigned int row, const double rowNT[], const int rowFT[], unsigned int blockRow, const class BitMatrix *bag) const {
-  int tc;
-  for (tc = 0; tc < nTree; tc++) {
-    if (bag->TestBit(row, tc)) {
-      predict->BagIdx(blockRow, tc);
+void Forest::PredictRowMixed(unsigned int row, const double rowNT[], const unsigned int rowFT[], unsigned int blockRow, const class BitMatrix *bag) const {
+  for (unsigned int tIdx = 0; tIdx < NTree(); tIdx++) {
+    if (bag->TestBit(row, tIdx)) {
+      predict->BagIdx(blockRow, tIdx);
       continue;
     }
 
-    unsigned int treeBase = treeOrigin[tc];
-    unsigned int idx = 0;
+    unsigned int idx = treeOrigin[tIdx];
     unsigned int bump;
     unsigned int pred;
     double num;
-    forestNode[treeBase].Ref(pred, bump, num);
+    Ref(idx, pred, bump, num);
     while (bump != 0) {
       bool isFactor;
-      unsigned int blockIdx = PredBlock::BlockIdx(pred, isFactor);
-      idx += isFactor ? (facSplit->TestBit(tc, (unsigned int) num + rowFT[blockIdx]) ? bump : bump + 1) : (rowNT[blockIdx] <= num ? bump : bump + 1);
-      forestNode[treeBase + idx].Ref(pred, bump, num);
+      unsigned int blockIdx = predMap->BlockIdx(pred, isFactor);
+      idx += isFactor ? (facSplit->TestBit(tIdx, (unsigned int) num + rowFT[blockIdx]) ? bump : bump + 1) : (rowNT[blockIdx] <= num ? bump : bump + 1);
+      Ref(idx, pred, bump, num);
     }
-    predict->LeafIdx(blockRow, tc, pred);
+    predict->LeafIdx(blockRow, tIdx, pred);
   }
 }
 
 
 /**
  */
-void Forest::NodeInit(unsigned int treeHeight) {
+void ForestTrain::NodeInit(unsigned int treeHeight) {
   ForestNode fn;
   fn.Init();
   forestNode.insert(forestNode.end(), treeHeight, fn);
@@ -249,7 +248,7 @@ void Forest::NodeInit(unsigned int treeHeight) {
 /**
    @brief Produces new splits for an entire tree.
  */
-void Forest::BitProduce(const BV *splitBits, unsigned int bitEnd) {
+void ForestTrain::BitProduce(const BV *splitBits, unsigned int bitEnd) {
   splitBits->Consume(facVec, bitEnd);
 }
 
@@ -257,7 +256,7 @@ void Forest::BitProduce(const BV *splitBits, unsigned int bitEnd) {
 /**
   @brief Reserves space in the relevant vectors for new trees.
  */
-void Forest::Reserve(unsigned int blockHeight, unsigned int blockFac, double slop) {
+void ForestTrain::Reserve(unsigned int blockHeight, unsigned int blockFac, double slop) {
   forestNode.reserve(slop * blockHeight);
   if (blockFac > 0) {
     facVec.reserve(slop * blockFac);
@@ -272,7 +271,7 @@ void Forest::Reserve(unsigned int blockHeight, unsigned int blockFac, double slo
    
    @return void.
  */
-void Forest::Origins(unsigned int tIdx) {
+void ForestTrain::Origins(unsigned int tIdx) {
   treeOrigin[tIdx] = Height();
   facOrigin[tIdx] = SplitHeight();
 }
@@ -285,23 +284,23 @@ void Forest::Origins(unsigned int tIdx) {
 
    @return void
  */
-void Forest::SplitUpdate(const RowRank *rowRank) const {
+void ForestTrain::SplitUpdate(const PMTrain *pmTrain, const RowRank *rowRank) const {
   for (unsigned int i = 0; i < forestNode.size(); i++) {
-    forestNode[i].SplitUpdate(rowRank);
+    forestNode[i].SplitUpdate(pmTrain, rowRank);
   }
 }
 
 
 /**
-   @brief Assigns value at mean rank to numerical split.
+   @brief Assigns value at quantile rank to numerical split.
 
    @param rowRank holds the presorted predictor values.
 
    @return void.
  */
-void ForestNode::SplitUpdate(const RowRank *rowRank) {
-  if (Nonterminal() && !PredBlock::IsFactor(pred)) {
-    num = rowRank->MeanRank(pred, num);    
+void ForestNode::SplitUpdate(const PMTrain *pmTrain, const RowRank *rowRank) {
+  if (Nonterminal() && !pmTrain->IsFactor(pred)) {
+    splitVal.num = rowRank->QuantRank(pred, splitVal.rankRange, splitQuant);
   }
 }
 
@@ -311,13 +310,13 @@ void ForestNode::SplitUpdate(const RowRank *rowRank) {
 
    @return void, with output reference vectors.
  */
-void ForestNode::Export(const std::vector<unsigned int> &_nodeOrigin, const std::vector<ForestNode> &_forestNode, std::vector<std::vector<unsigned int> > &_pred, std::vector<std::vector<unsigned int> > &_bump, std::vector<std::vector<double> > &_split) {
-  for (unsigned int tIdx = 0; tIdx < _nodeOrigin.size(); tIdx++) {
-    unsigned int treeHeight = TreeHeight(_nodeOrigin, _forestNode.size(), tIdx);
+void ForestNode::Export(const unsigned int _nodeOrigin[], unsigned int _nTree, const ForestNode *_forestNode, unsigned int nodeEnd, std::vector<std::vector<unsigned int> > &_pred, std::vector<std::vector<unsigned int> > &_bump, std::vector<std::vector<double> > &_split) {
+  for (unsigned int tIdx = 0; tIdx < _nTree; tIdx++) {
+    unsigned int treeHeight = TreeHeight(_nodeOrigin, _nTree, nodeEnd, tIdx);
     _pred[tIdx] = std::vector<unsigned int>(treeHeight);
     _bump[tIdx] = std::vector<unsigned int>(treeHeight);
     _split[tIdx] = std::vector<double>(treeHeight);
-    TreeExport(_forestNode, _pred[tIdx], _bump[tIdx], _split[tIdx], _nodeOrigin[tIdx], TreeHeight(_nodeOrigin, _forestNode.size(), tIdx));
+    TreeExport(_forestNode, _pred[tIdx], _bump[tIdx], _split[tIdx], _nodeOrigin[tIdx], treeHeight);
   }
 }
 
@@ -327,7 +326,7 @@ void ForestNode::Export(const std::vector<unsigned int> &_nodeOrigin, const std:
 
    @return void, with output reference vectors.
  */
-void ForestNode::TreeExport(const std::vector<ForestNode> &_forestNode, std::vector<unsigned int> &_pred, std::vector<unsigned int> &_bump, std::vector<double> &_split, unsigned int treeOff, unsigned int treeHeight) {
+void ForestNode::TreeExport(const ForestNode *_forestNode, std::vector<unsigned int> &_pred, std::vector<unsigned int> &_bump, std::vector<double> &_split, unsigned int treeOff, unsigned int treeHeight) {
   for (unsigned int i = 0; i < treeHeight; i++) {
     _forestNode[treeOff + i].Ref(_pred[i], _bump[i], _split[i]);
   }

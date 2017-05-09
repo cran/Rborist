@@ -16,13 +16,11 @@
 #include "bv.h"
 
 //#include <iostream>
-using namespace std;
-
+//using namespace std;
 
 /**
  */
-BV::BV(unsigned int len, bool slotWise) : nSlot(slotWise ? len : SlotAlign(len)), wrapper(false) {
-  raw = new unsigned int[nSlot];
+BV::BV(unsigned int len, bool slotWise) : nSlot(slotWise ? len : SlotAlign(len)), raw(new unsigned int[nSlot]), wrapper(false) {
   for (unsigned int i = 0; i < nSlot; i++) {
     raw[i] = 0;
   }
@@ -30,18 +28,29 @@ BV::BV(unsigned int len, bool slotWise) : nSlot(slotWise ? len : SlotAlign(len))
 
 
 /**
+   @brief Copies contents of constant vector.
  */
-BV::BV(const std::vector<unsigned int> &_raw) : nSlot(_raw.size()), wrapper(false) {
-  raw = new unsigned int[nSlot];
+BV::BV(const std::vector<unsigned int> &_raw) : nSlot(_raw.size()), raw(new unsigned int[nSlot]), wrapper(false) {
   for (unsigned int i = 0; i < nSlot; i++) {
     raw[i] = _raw[i];
   }
 }
 
+
 /**
-   @brief Wrapper constructor.
+   @brief Wrapper constructor.  Initializes external container if empty.
  */
-BV::BV(unsigned int *_raw, unsigned int _nSlot) : raw(_raw), nSlot(_nSlot), wrapper(true) {
+BV::BV(std::vector<unsigned int> &_raw, unsigned int _nSlot) : nSlot(_nSlot), wrapper(true) {
+  if (_raw.size() == 0) {
+    for (unsigned int slot = 0; slot < nSlot; slot++) {
+      _raw.push_back(0);
+    }
+  }
+  raw = &_raw[0];
+}
+
+
+BV::BV(unsigned int _raw[], size_t _nSlot) : nSlot(_nSlot), raw(_raw), wrapper(true) {
 }
 
 
@@ -129,9 +138,21 @@ BitMatrix::BitMatrix(unsigned int _nRow, unsigned int _nCol) : BV(_nRow * Stride
 
 
 /**
-   @brief Constructor.  Sets stride to zero if empty.
+   @brief Copy constructor.  Sets stride to zero if empty.
  */
 BitMatrix::BitMatrix(unsigned int _nRow, unsigned int _nCol, const std::vector<unsigned int> &_raw) : BV(_raw), nRow(_nRow), stride(_raw.size() > 0 ? Stride(_nCol) : 0) {
+}
+
+
+/**
+   @brief Wrapper constructor.  If nonempty, assumed to be reconstituting
+   a previously-exported BitMatrix of conforming dimensions.
+ */
+BitMatrix::BitMatrix(std::vector<unsigned int> &_raw, unsigned int _nRow, unsigned int _nCol) : BV(_raw, _nRow * Stride(_nCol)), nRow(_nRow), stride(nRow > 0 ? Stride(_nCol) : 0) {
+}
+
+
+BitMatrix::BitMatrix(unsigned int _raw[], size_t _nRow, size_t _nCol) : BV(_raw, _nRow * Stride(_nCol)), nRow(_nRow), stride(nRow > 0 ? Stride(_nCol) : 0) {
 }
 
 
@@ -143,18 +164,13 @@ BitMatrix::~BitMatrix() {
 
 /**
  */
-BVJagged::BVJagged(const std::vector<unsigned int> &_raw, const std::vector<unsigned int> _rowOrigin) : BV(_raw), nRow(_rowOrigin.size()), nElt(Slots() * slotElts) {
-  rowOrigin = new unsigned int[nRow];
-  for (unsigned int i = 0; i < nRow; i++) {
-    rowOrigin[i] = _rowOrigin[i];
-  }
+BVJagged::BVJagged(unsigned int _raw[], size_t _nSlot, const unsigned int _rowOrigin[], unsigned int _nRow) : BV(_raw, _nSlot), nElt(_nSlot * slotElts), rowOrigin(_rowOrigin), nRow(_nRow) {
 }
 
 
 /**
  */
 BVJagged::~BVJagged() {
-  delete [] rowOrigin;
 }
 
 
@@ -170,8 +186,8 @@ unsigned int BVJagged::RowHeight(unsigned int rowIdx) const {
 }
 
 
-void BVJagged::Export(const std::vector<unsigned int> _origin, const std::vector<unsigned int> _raw, std::vector<std::vector<unsigned int> > &outVec) {
-  BVJagged *bvj = new BVJagged(_raw, _origin);
+void BVJagged::Export(unsigned int _raw[], size_t _facLen, const unsigned int _origin[], unsigned int _nElt, std::vector<std::vector<unsigned int> > &outVec) {
+  BVJagged *bvj = new BVJagged(_raw, _facLen, _origin, _nElt);
   bvj->Export(outVec);
 
   delete bvj;

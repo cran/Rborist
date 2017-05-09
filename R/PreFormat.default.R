@@ -1,4 +1,4 @@
-# Copyright (C)  2012-2016   Mark Seligman
+# Copyright (C)  2012-2017   Mark Seligman
 ##
 ## This file is part of ArboristBridgeR.
 ##
@@ -16,10 +16,6 @@
 ## along with ArboristBridgeR.  If not, see <http://www.gnu.org/licenses/>.
 
 PreFormat.default <- function(x) {
-  # Argument checking:
-  if (any(is.na(x)))
-    stop("NA not supported in design matrix")
-
   predBlock <- PredBlock(x)
   rowRank <- .Call("RcppRowRank", predBlock)
 

@@ -30,6 +30,8 @@
                 qBin = 5000,
                 regMono = NULL,
                 rowWeight = NULL,
+                splitQuant = NULL,
+                thinLeaves = FALSE,
                 treeBlock = 1,
                 pvtBlock = 8, ...)
 }
@@ -60,10 +62,14 @@
   \item{regMono}{signed probability constraint for monotonic
     regression.}
   \item{rowWeight}{row weighting for initial sampling of tree.}
+  \item{splitQuant}{(sub)quantile at which to place cut point for
+  numerical splits}.
+  \item{thinLeaves}{bypasses creation of export and quantile state in
+  order to reduce memory footprint.}
   \item{treeBlock}{maximum number of trees to train during a single
     level (e.g., coprocessor computing).}
   \item{pvtBlock}{maximum number of trees to train in a block (e.g.,
-  cluster computing).}
+    cluster computing).}
   \item{...}{not currently used.}
 }
 
@@ -140,6 +146,8 @@
 
       \code{mse}{ the mean-square error of prediction.}
 
+      \code{mae}{ the mean absolute error of prediction.}
+      
       \code{rsq}{ the r-squared statistic.}
 
       \code{qPred}{ a matrix containing the prediction quantiles, if requested.}
@@ -151,6 +159,8 @@
 
       \code{misprediction}{ a vector containing the classwise
 	misprediction rates.}
+
+      \code{oobError}{ the out-of-bag error rate}
       
       \code{confusion}{ a confusion matrix.}
 
@@ -249,13 +259,26 @@
 
 
   # Constrains modelled response to be increasing with respect to X1
-  # and decreasing with respect to X5 (both unlikely).
+  # and decreasing with respect to X5.
   rb <- Rborist(x, y, regMono=c(1.0, 0, 0, 0, -1.0, 0))
 
 
   # Causes rows to be sampled with random weighting:
   rb <- Rborist(x, y, rowWeight=runif(nRow))
 
+
+  # Suppresses creation of detailed leaf information needed for
+  # quantile prediction and external tools.
+  rb <- Rborist(x, y, thinLeaves = TRUE)
+
+
+  # Sets splitting position for predictor 0 to far left and predictor
+  # 1 to far right, others to default (median) position.
+
+  spq <- rep(0.5, ncol(x))
+  spq[0] <- 0.0
+  spq[1] <- 1.0
+  rb <- Rborist(x, y, splitQuant = spq)
   }
 }
 

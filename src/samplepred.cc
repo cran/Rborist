@@ -14,11 +14,15 @@
  */
 
 #include "samplepred.h"
+#include "path.h"
+#include "bv.h"
+
+#include <numeric>
 
 //#include <iostream>
-using namespace std;
+//using namespace std;
 
-unsigned int SPNode::runShift = 0;
+unsigned int SPNode::ctgShift = 0;
 
 /**
    @brief Computes a packing width sufficient to hold all (zero-based) response
@@ -30,12 +34,12 @@ unsigned int SPNode::runShift = 0;
  */
 void SPNode::Immutables(unsigned int ctgWidth) {
   unsigned int bits = 1;
-  runShift = 0;
+  ctgShift = 0;
   // Ctg values are zero-based, so the first power of 2 greater than or
   // equal to 'ctgWidth' has sufficient bits to hold all response values.
   while (bits < ctgWidth) {
     bits <<= 1;
-    runShift++;
+    ctgShift++;
   }
 }
 
@@ -43,16 +47,19 @@ void SPNode::Immutables(unsigned int ctgWidth) {
 /*
 **/
 void SPNode::DeImmutables() {
-  runShift = 0;
+  ctgShift = 0;
 }
 
 
 /**
    @brief Base class constructor.
  */
-SamplePred::SamplePred(unsigned int _nPred, unsigned int _bagCount) : bagCount(_bagCount), nPred(_nPred), bufferSize(_nPred * _bagCount), pitchSP(_bagCount * sizeof(SamplePred)), pitchSIdx(_bagCount * sizeof(unsigned int)) {
-  sampleIdx = new unsigned int[2* bufferSize];
+SamplePred::SamplePred(unsigned int _nPred, unsigned int _bagCount, unsigned int _bufferSize) : bagCount(_bagCount), nPred(_nPred), bufferSize(_bufferSize), pitchSP(_bagCount * sizeof(SamplePred)), pitchSIdx(_bagCount * sizeof(unsigned int)) {
+  indexBase = new unsigned int[2* bufferSize];
   nodeVec = new SPNode[2 * bufferSize];
+
+  stageOffset.reserve(nPred);
+  stageExtent.reserve(nPred);
 }
 
 
@@ -61,7 +68,7 @@ SamplePred::SamplePred(unsigned int _nPred, unsigned int _bagCount) : bagCount(_
  */
 SamplePred::~SamplePred() {
   delete [] nodeVec;
-  delete [] sampleIdx;
+  delete [] indexBase;
 }
 
 
@@ -70,8 +77,8 @@ SamplePred::~SamplePred() {
 
    @return SamplePred object for tree.
  */
-SamplePred *SamplePred::Factory(unsigned int _nPred, unsigned int _bagCount) {
-  SamplePred *samplePred = new SamplePred(_nPred, _bagCount);
+SamplePred *SamplePred::Factory(unsigned int _nPred, unsigned int _bagCount, unsigned int _bufferSize) {
+  SamplePred *samplePred = new SamplePred(_nPred, _bagCount, _bufferSize);
 
   return samplePred;
 }
@@ -86,16 +93,17 @@ SamplePred *SamplePred::Factory(unsigned int _nPred, unsigned int _bagCount) {
 
    @return void.
  */
-void SamplePred::Stage(const std::vector<StagePack> &stagePack, unsigned int predIdx) {
+void SamplePred::Stage(const std::vector<StagePack> &stagePack, unsigned int predIdx, unsigned int safeOffset, unsigned int extent) {
+  stageOffset[predIdx] = safeOffset;
+  stageExtent[predIdx] = extent;
+
   unsigned int *smpIdx;
   SPNode *spn = Buffers(predIdx, 0, smpIdx);
-
-  // TODO:  For sparse predictors, stage to DenseRank.
-
   for (unsigned int idx = 0; idx < stagePack.size(); idx++) {
     unsigned int sIdx = spn++->Init(stagePack[idx]);
     *smpIdx++ = sIdx;
   }
+  spn = Buffers(predIdx, 0, smpIdx);
 }
 
 
@@ -109,59 +117,128 @@ void SamplePred::Stage(const std::vector<StagePack> &stagePack, unsigned int pre
 unsigned int SPNode::Init(const StagePack &stagePack) {
   unsigned int sIdx, ctg;
   stagePack.Ref(sIdx, rank, sCount, ctg, ySum);
-  sCount = (sCount << runShift) | ctg; // Packed representation.
+  sCount = (sCount << ctgShift) | ctg; // Packed representation.
   
   return sIdx;
 }
 
 
 /**
-   @brief Fills in the high and low ranks defining a numerical split.
+   @brief Walks a block of adjacent SamplePred records associated with
+   the explicit component of a split.
 
-   @param predIdx is the splitting predictor.
+   @param predIdx is the argmax predictor for the split.
 
-   @param sourceBit (0/1) indicates which buffer holds the current values.
+   @param sourceBit is a dual-buffer toggle.
 
-   @param spPos is the index position of the split.
+   @param start is the starting SamplePred index for the split.
 
-   @param rkLow outputs the low rank.
+   @param extent is the number of SamplePred indices subsumed by the split.
 
-   @param rkHigh outputs the high rank.
+   @param replayExpl sets bits corresponding to explicit indices defined
+   by the split.  Indices are either node- or subtree-relative, depending
+   on Bottom's current indexing mode.
 
-   @return void, with output reference parameters.
+   @return sum of responses within the block.
  */
-void SamplePred::SplitRanks(unsigned int predIdx, unsigned int sourceBit, int spPos, unsigned int &rkLow, unsigned int &rkHigh) {
-  SPNode *spn = SplitBuffer(predIdx, sourceBit);
-  rkLow = spn[spPos].Rank();
-  rkHigh = spn[spPos + 1].Rank();
-}
-
-
-/**
-   @brief Maps a block of predictor-associated sample indices to a specified pretree node index.
-
-   @param predIdx is the splitting predictor.
-
-   @param sourceBit (0/1) indicates which buffer holds the current values.
-
-   @param start is the block starting index.
-
-   @param end is the block ending index.
-
-   @param ptId is the pretree node index to which to map the block.
-
-   @return sum of response values associated with each replayed index.
-*/
-double SamplePred::Replay(unsigned int sample2PT[], unsigned int predIdx, unsigned int sourceBit, int start, int end, unsigned int ptId) {
-  unsigned int *sIdx;
-  SPNode *spn = Buffers(predIdx, sourceBit, sIdx);
+double SamplePred::BlockReplay(unsigned int predIdx, unsigned int sourceBit, unsigned int start, unsigned int extent, BV *replayExpl) {
+  unsigned int *idx;
+  SPNode *spn = Buffers(predIdx, sourceBit, idx);
 
   double sum = 0.0;
-  for (int idx = start; idx <= end; idx++) {
-    sum += spn[idx].YSum();
-    unsigned int sampleIdx = sIdx[idx];
-    sample2PT[sampleIdx] = ptId;
+  for (unsigned int spIdx = start; spIdx < start + extent; spIdx++) {
+    sum += spn[spIdx].YSum();
+    replayExpl->SetBit(idx[spIdx]);
   }
 
   return sum;
+}
+
+
+SPNode *SamplePred::RestageStxGen(unsigned int reachOffset[], unsigned int predIdx, unsigned int bufIdx, IdxPath *stPath, unsigned int pathMask, unsigned int startIdx, unsigned int extent, bool nodeRel) {
+  SPNode *source, *targ;
+  unsigned int *idxSource, *idxTarg;
+  Buffers(predIdx, bufIdx, source, idxSource, targ, idxTarg);
+
+  for (unsigned int idx = startIdx; idx < startIdx + extent; idx++) {
+    unsigned int relSource = idxSource[idx];
+    unsigned int path;
+    if (stPath->PathLive(relSource, pathMask, path)) {
+      unsigned int destIdx = reachOffset[path]++;
+      targ[destIdx] = source[idx];
+      // RelFront() performs (slow) sIdx-to-relIdx mapping:  transition only.
+      idxTarg[destIdx] = nodeRel ? stPath->RelFront(relSource) : relSource;
+    }
+  }
+
+  return targ;
+}
+
+
+
+SPNode *SamplePred::RestageStxOne(unsigned int reachOffset[], unsigned int predIdx, unsigned int bufIdx, IdxPath *stPath, unsigned int pathMask, unsigned int startIdx, unsigned int extent, bool nodeRel) {
+  SPNode *source, *targ;
+  unsigned int *idxSource, *idxTarg;
+  Buffers(predIdx, bufIdx, source, idxSource, targ, idxTarg);
+
+  unsigned int leftOff = reachOffset[0];
+  unsigned int rightOff = reachOffset[1];
+  for (unsigned int idx = startIdx; idx < startIdx + extent; idx++) {
+    unsigned int relSource = idxSource[idx];
+    unsigned int path;
+    if (stPath->PathLive(relSource, pathMask, path)) {
+      unsigned int destIdx = path == 0 ? leftOff++ : rightOff++;
+      targ[destIdx] = source[idx];
+      // RelFront() performs (slow) sIdx-to-relIdx mapping:  transition only.
+      idxTarg[destIdx] = nodeRel ? stPath->RelFront(relSource) : relSource;
+    }
+  }
+
+  reachOffset[0] = leftOff;
+  reachOffset[1] = rightOff;
+
+  return targ;
+}
+
+
+SPNode *SamplePred::RestageNdxGen(unsigned int reachOffset[], const unsigned int reachBase[], unsigned int predIdx, unsigned int bufIdx, IdxPath *frontPath, unsigned int pathMask, unsigned int startIdx, unsigned int extent) {
+  SPNode *source, *targ;
+  unsigned int *idxSource, *idxTarg;
+  Buffers(predIdx, bufIdx, source, idxSource, targ, idxTarg);
+
+  for (unsigned int idx = startIdx; idx < startIdx + extent; idx++) {
+    unsigned int relSource = idxSource[idx];
+    unsigned int path, offRel;
+    if (frontPath->RefLive(relSource, pathMask, path, offRel)) {
+      unsigned int destIdx = reachOffset[path]++;
+      targ[destIdx] = source[idx];
+      idxTarg[destIdx] = reachBase[path] + offRel;
+    }
+  }
+
+  return targ;
+}
+
+
+SPNode *SamplePred::RestageNdxOne(unsigned int reachOffset[], const unsigned int reachBase[], unsigned int predIdx, unsigned int bufIdx, IdxPath *frontPath, unsigned int pathMask, unsigned int startIdx, unsigned int extent) {
+  SPNode *source, *targ;
+  unsigned int *idxSource, *idxTarg;
+  Buffers(predIdx, bufIdx, source, idxSource, targ, idxTarg);
+
+  unsigned int leftOff = reachOffset[0];
+  unsigned int rightOff = reachOffset[1];
+  for (unsigned int idx = startIdx; idx < startIdx + extent; idx++) {
+    unsigned int relSource = idxSource[idx];
+    unsigned int path, offRel;
+    if (frontPath->RefLive(relSource, pathMask, path, offRel)) {
+      unsigned int destIdx = path == 0 ? leftOff++ : rightOff++;
+      targ[destIdx] = source[idx];
+      idxTarg[destIdx] = reachBase[path] + offRel;
+    }
+  }
+
+  reachOffset[0] = leftOff;
+  reachOffset[1] = rightOff;
+
+  return targ;
 }

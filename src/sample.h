@@ -85,28 +85,29 @@ class SampleNode {
  @brief Run of instances of a given row obtained from sampling for an individual tree.
 */
 class Sample {
-  int *row2Sample;
-  void PreStage(const class RowRank *rowRank);
-  void PreStage(const class RowRank *rowRank, int predIdx);
+  class BV *treeBag;
+  std::vector<unsigned int> row2Sample;
  protected:
+  const unsigned int noSample; // Inattainable sample index.
   static unsigned int nRow;
-  static unsigned int nPred;
-  static int nSamp;
-  SampleNode *sampleNode;
+  static unsigned int nSamp;
+  std::vector<SampleNode> sampleNode;
   unsigned int bagCount;
   double bagSum;
-  class BV *treeBag;
   class SamplePred *samplePred;
   class Bottom *bottom;
-  void PreStage(const std::vector<double> &y, const std::vector<unsigned int> &yCtg, const class RowRank *rowRank);
+  unsigned int PreStage(const std::vector<double> &y, const std::vector<unsigned int> &yCtg, const class RowRank *rowRank, class SamplePred *&_samplePred);
+  void Stage(const class RowRank *rowRank);
+  void Stage(const class RowRank *rowRank, unsigned int predIdx);
+  void PackIndex(unsigned int row, unsigned int predRank, std::vector<class StagePack> &stagePack);
 
-  static unsigned int *RowSample();
+  static void RowSample(std::vector<unsigned int> &sCountRow);
 
  public:
-  static class SampleCtg *FactoryCtg(const std::vector<double> &y, const class RowRank *rowRank, const std::vector<unsigned int> &yCtg);
-  static class SampleReg *FactoryReg(const std::vector<double> &y, const class RowRank *rowRank, const std::vector<unsigned int> &row2Rank);
+  static class SampleCtg *FactoryCtg(const class PMTrain *pmTrain, const std::vector<double> &y, const class RowRank *rowRank, const std::vector<unsigned int> &yCtg);
+  static class SampleReg *FactoryReg(const class PMTrain *pmTrain, const std::vector<double> &y, const class RowRank *rowRank, const std::vector<unsigned int> &row2Rank);
 
-  static void Immutables(unsigned int _nRow, unsigned int _nPred, int _nSamp, const double _feSampleWeight[], bool _withRepl, unsigned int _ctgWidth, int _nTree);
+  static void Immutables(unsigned int _nSamp, const std::vector<double> &_feSampleWeight, bool _withRepl, unsigned int _ctgWidth, unsigned int _nTree);
   static void DeImmutables();
 
   Sample();
@@ -115,18 +116,24 @@ class Sample {
   /**
      @brief Accessor for sample count.
    */
-  static inline int NSamp() {
+  static inline unsigned int NSamp() {
     return nSamp;
   }
+
+
+  const std::vector<SampleNode> &StageSample() {
+    return sampleNode;
+  }    
 
   
   /**
      @param row row index at which to look up sample index.
 
-     @return Sample index associated with row, or -1 if none.
+     @return Sample index associated with row, or 'noSample' if none.
    */
-  inline int SampleIdx(unsigned int row) const {
-    return row2Sample[row];
+  inline bool SampleIdx(unsigned int row, unsigned int &sIdx) const {
+    sIdx = row2Sample[row];
+    return sIdx != noSample;
   }
   
   
@@ -192,7 +199,7 @@ class SampleReg : public Sample {
   }
 
 
-  void Stage(const std::vector<double> &y, const std::vector<unsigned int> &row2Rank, const class RowRank *rowRank);
+  void Stage(const class PMTrain *pmTrain, const std::vector<double> &y, const std::vector<unsigned int> &row2Rank, const class RowRank *rowRank);
 };
 
 
@@ -204,11 +211,11 @@ class SampleCtg : public Sample {
  public:
   SampleCtg();
   ~SampleCtg();
-  static void Immutables(unsigned int _ctgWidth, int _nTree);
+  static void Immutables(unsigned int _ctgWidth, unsigned int _nTree);
   static void DeImmutables();
 
   
-  void Stage(const std::vector<unsigned int> &yCtg, const std::vector<double> &y, const class RowRank *rowRank);
+  void Stage(const class PMTrain *pmTrain, const std::vector<unsigned int> &yCtg, const std::vector<double> &y, const class RowRank *rowRank);
 };
 
 

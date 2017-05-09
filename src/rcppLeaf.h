@@ -1,4 +1,4 @@
-// Copyright (C)  2012-2016  Mark Seligman
+// Copyright (C)  2012-2017  Mark Seligman
 //
 // This file is part of ArboristBridgeR.
 //
@@ -33,11 +33,18 @@
 using namespace Rcpp;
 
 class RcppLeaf {
+  static RawVector rv1, rv2, rv3;
+  static NumericVector nv1;
+  
+  static void Serialize(const std::vector<class LeafNode> &leafNode, const std::vector<class BagLeaf> &bagLeaf, const std::vector<unsigned int> &bagBits, RawVector &leafRaw, RawVector &blRaw, RawVector &bbRaw);
+
+
  public:
-   static SEXP WrapReg(const std::vector<unsigned int> &leafOrigin, std::vector<class LeafNode> &leafNode, const std::vector<class BagRow> &bagRow, unsigned int rowTrain, const std::vector<unsigned int> &rank, const std::vector<double> &yRanked);
-   static SEXP WrapCtg(const std::vector<unsigned int> &leafOrigin, const std::vector<LeafNode> &leafNode, const std::vector<BagRow> &bagRow, unsigned int rowTrain, const std::vector<double> &weight, const CharacterVector &levels);
-   static void UnwrapReg(SEXP sLeaf, std::vector<double> &_yRanked, std::vector<unsigned int> &_leafOrigin, std::vector<class LeafNode> &_leafNode, std::vector<class BagRow> &_bagRow, unsigned int &rowTrain, std::vector<unsigned int> &_rank);
-   static void UnwrapCtg(SEXP sLeaf, std::vector<unsigned int> &_leafOrigin, std::vector<class LeafNode> &_leafNode, std::vector<class BagRow> &_bagRow, unsigned int &rowTrain, std::vector<double> &_weight, CharacterVector &_levels);
+  static SEXP WrapReg(const std::vector<unsigned int> &leafOrigin, std::vector<class LeafNode> &leafNode, const std::vector<class BagLeaf> &bagLeaf, const std::vector<unsigned int> &bagBits, const std::vector<double> &yTrain);
+  static SEXP WrapCtg(const std::vector<unsigned int> &leafOrigin, const std::vector<LeafNode> &leafNode, const std::vector<BagLeaf> &bagLeaf, const std::vector<unsigned int> &bagBits, const std::vector<double> &weight, unsigned int rowTrain, const CharacterVector &levels);
+  static void UnwrapReg(SEXP sLeaf, std::vector<double> &_yTrain, std::vector<unsigned int> &_leafOrigin, class LeafNode *&_leafNode, unsigned int &_leafCount, class BagLeaf *&_bagLeaf, unsigned int &bagLeafTot, unsigned int *&_bagBits, bool bag);
+  static void UnwrapCtg(SEXP sLeaf, std::vector<unsigned int> &_leafOrigin, class LeafNode *&_leafNode, unsigned int &_leafCount, class BagLeaf *&_bagLeaf, unsigned int &bagLeafTot, unsigned int *&_bagBits, double *&_weight, unsigned int &_rowTrain, CharacterVector &_levels, bool bag);
+static void Clear();
 };
 
 #endif

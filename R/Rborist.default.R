@@ -1,4 +1,4 @@
-# Copyright (C)  2012-2016   Mark Seligman
+# Copyright (C)  2012-2017   Mark Seligman
 ##
 ## This file is part of ArboristBridgeR.
 ##
@@ -33,8 +33,11 @@
                 qBin = 5000,
                 regMono = NULL,
                 rowWeight = NULL,
+                splitQuant = NULL,
+                thinLeaves = FALSE,
                 treeBlock = 1,
-                pvtBlock = 8, ...) {
+                pvtBlock = 8,
+                ...) {
 
   # Argument checking:
   if (inherits(x, "PreTrain") || inherits(x, "PreFormat")) {
@@ -47,9 +50,29 @@
   nPred <- predBlock$nPredNum + predBlock$nPredFac
   nRow <- predBlock$nRow
 
+  if (length(y) != nRow)
+    stop("Nonconforming design matrix and response")
+          
   if (is.null(regMono)) {
     regMono <- rep(0.0, nPred)
   }
+  else {
+    if (length(regMono) != nPred)
+        stop("Monotone specification length differs from predictor count.")
+    if (any(abs(regMono) > 1.0))
+        stop("Monotone specification contains invalid probability values.")
+  }
+    
+  if (is.null(splitQuant)) {
+    splitQuant <- rep(0.5, nPred)
+  }
+  else {
+    if (length(splitQuant) != nPred)
+        stop("Split quantile specification differs from predictor count.")
+    if (any(splitQuant > 1 || splitQuant < 0))
+        stop("Split specification contains invalid quantile values.")
+  }
+    
   if (nSamp == 0) {
     nSamp <- ifelse(withRepl, nRow, round((1-exp(-1)) * nRow))
   }
@@ -135,7 +158,9 @@
   # Quantile constraints:  regression only
   if (quantiles && is.factor(y))
     stop("Quantiles supported for regression case only")
-
+  if (quantiles && thinLeaves)
+    stop("Thin leaves insufficient for validating quantiles.")
+    
   if (!is.null(quantVec)) {
     if (any(quantVec > 1) || any(quantVec < 0))
       stop("Quantile range must be within [0,1]")
@@ -160,10 +185,10 @@
     if (any(regMono != 0)) {
       stop("Monotonicity undefined for categorical response")
     }
-    train <- .Call("RcppTrainCtg", predBlock, preFormat$rowRank, y, nTree, nSamp, rowWeight, withRepl, treeBlock, minNode, minInfo, nLevel, predFixed, probVec, classWeight)
+    train <- .Call("RcppTrainCtg", predBlock, preFormat$rowRank, y, nTree, nSamp, rowWeight, withRepl, treeBlock, minNode, minInfo, nLevel, predFixed, splitQuant, probVec, thinLeaves, classWeight)
   }
   else {
-    train <- .Call("RcppTrainReg", predBlock, preFormat$rowRank, y, nTree, nSamp, rowWeight, withRepl, treeBlock, minNode, minInfo, nLevel, predFixed, probVec, regMono)
+    train <- .Call("RcppTrainReg", predBlock, preFormat$rowRank, y, nTree, nSamp, rowWeight, withRepl, treeBlock, minNode, minInfo, nLevel, predFixed, splitQuant, probVec, thinLeaves, regMono)
   }
 
   predInfo <- train[["predInfo"]]
@@ -172,32 +197,11 @@
     info = predInfo
   )
 
-  if (!noValidate) {
-    if (is.factor(y)) {
-      if (ctgCensus == "votes") {
-        validation <- .Call("RcppValidateVotes", predBlock, train$forest, train$leaf, y);
-      }
-      else if (ctgCensus == "prob") {
-        validation <- .Call("RcppValidateProb", predBlock, train$forest, train$leaf, y);
-      }
-      else {
-        stop(paste("Unrecognized ctgCensus type:  ", ctgCensus))
-      }
-    }
-    else {
-      if (quantiles) {
-        if (is.null(quantVec)) {
-          quantVec <- DefaultQuantVec()
-        }
-        validation <- .Call("RcppValidateQuant", predBlock, train$forest, train$leaf, quantVec, qBin, y);
-      }
-      else {
-        validation <- .Call("RcppValidateReg", predBlock, train$forest, train$leaf, y);
-      }
-    }
+  if (noValidate) {
+    validation <- NULL
   }
   else {
-    validation <- NULL
+    validation <- Validate(preFormat, train, y, ctgCensus, quantVec, quantiles, qBin)
   }
 
   arbOut <- list(
@@ -212,10 +216,15 @@
   arbOut
 }
 
+
 # Groups predictors into like-typed blocks and creates zero-based type
 # summaries.
 #
 PredBlock <- function(x, sigTrain = NULL) {
+  # Argument checking:
+  if (any(is.na(x)))
+    stop("NA not supported in design matrix")
+
   # For now, only numeric and factor types supported.
   #
   if (is.data.frame(x)) { # As with "randomForest" package
@@ -228,17 +237,25 @@ PredBlock <- function(x, sigTrain = NULL) {
     }
     return(.Call("RcppPredBlockFrame", x, numIdx, facIdx, facCard, sigTrain))
   }
-  else if (is.integer(x)) {
-    return(.Call("RcppPredBlockNum", data.matrix(x)))
+  else if (is.matrix(x)) {
+    if (is.integer(x)) {
+      return(.Call("RcppPredBlockNum", data.matrix(x)))
+    }
+    else if (is.numeric(x)) {
+      return(.Call("RcppPredBlockNum", x))
+    }
+    else if (is.character(x)) {
+      stop("Character data not yet supported")
+    }
+    else {
+      stop("Unsupported matrix type")
+    }
   }
-  else if (is.numeric(x)) {
-    return(.Call("RcppPredBlockNum", x))
-  }
-  else if (is.character(x)) {
-    stop("Character data not yet supported")
+  else if (inherits(x, "dgCMatrix")) {
+     return(.Call("RcppPredBlockSparse", x))
   }
   else {
-    stop("Unsupported data format")
+    stop("Expecting data frame or matrix")
   }
 }
 

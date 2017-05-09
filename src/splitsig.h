@@ -16,21 +16,73 @@
 #ifndef ARBORIST_SPLITSIG_H
 #define ARBORIST_SPLITSIG_H
 
+#include "param.h"
+
+/**
+   @brief Holds the information actually computed by a splitting method.
+ */
+class NuxLH {
+  double info; // Information content of split.
+  unsigned int idxStart; // Not derivable from index node alone.
+  unsigned int lhExtent; // Index count of split LHS.
+  unsigned int sCount; // # samples subsumed by split LHS.
+  RankRange rankRange; // Numeric only.
+  unsigned int lhImplicit; // Numeric only.
+ public:
+
+  void inline Init(unsigned int _idxStart, unsigned int _lhExtent, unsigned int _sCount, double _info) {
+    idxStart = _idxStart;
+    lhExtent = _lhExtent;
+    sCount = _sCount;
+    info = _info;
+    rankRange.rankLow = rankRange.rankHigh = 0; // TODO:  'noRank' i/o zero.
+  }
+
+  
+  /**
+     @brief With introduction of dense ranks, splitting ranks can no longer be
+     inferred by position alone so are passed explicitly.
+  */
+  void inline InitNum(unsigned int _idxStart, unsigned int _lhExtent, unsigned int _sCount, double _info, unsigned int _rankLow, unsigned int _rankHigh, unsigned int _lhImplicit = 0) {
+    Init(_idxStart, _lhExtent, _sCount, _info);
+    rankRange.rankLow = _rankLow;
+    rankRange.rankHigh = _rankHigh;
+    lhImplicit = _lhImplicit;
+  }
+
+  
+  void Ref(unsigned int &_idxStart, unsigned int &_lhExtent, unsigned int &_sCount, double &_info, RankRange &_rankRange, unsigned int &_lhImplicit) const {
+    _idxStart = idxStart;
+    _lhExtent = lhExtent;
+    _sCount = sCount;
+    _info = info;
+    _rankRange = rankRange;
+    _lhImplicit = lhImplicit;
+  }
+};
+
+
 /**
    @brief SSNode records sample, index and information content for a
    potential split at a given split/predictor pair.
 
  */
-class SSNode {  
-  double NonTerminalRun(class SamplePred *samplePred, class PreTree *preTree, unsigned int splitIdx, int start, int end, unsigned int ptId, unsigned int &ptLH, unsigned int &ptRH, class Run *run);
-  double NonTerminalNum(class SamplePred *samplePred, class PreTree *preTree, unsigned int splitIdx, int start, int end, unsigned int ptId, unsigned int &ptLH, unsigned int &ptRH);
+class SSNode {
+  bool NonTerminalRun(class Bottom *bottom, class PreTree *preTree, class Run *run, unsigned int extent, unsigned int ptId, double &sumExpl);
+  double ReplayRun(class Bottom *bottom, class PreTree *preTree, unsigned int ptId, const class Run *run);
+  bool NonTerminalNum(class Bottom *bottom, class PreTree *preTree, unsigned int extent, unsigned int ptId, double &sumExpl);
+  double ReplayNum(class Bottom *bottom, unsigned int extent);
+
  public:
   SSNode();
-  int setIdx; // Index into RunSet workspace.
+  unsigned int setIdx; // Index into RunSet workspace.
   unsigned int predIdx; // Rederivable, but convenient to cache.
   unsigned int sCount; // # samples subsumed by split LHS.
-  unsigned int lhIdxCount; // Index count of split LHS.
+  unsigned int idxStart; // Dense packing causes value to vary.
+  unsigned int lhExtent; // Index count of split LHS.
   double info; // Information content of split.
+  RankRange rankRange; // Numeric only.
+  unsigned int lhImplicit; // LHS implicit index count:  numeric only.
   unsigned char bufIdx;
   
   static double minRatio;
@@ -39,6 +91,7 @@ class SSNode {
   // Replay() and NonTerminal() methods implemented virtually.  Coprocessor
   // may not support virtual invocation, however, so we opt for a less
   // elegant solution.
+
 
   /**
    @brief Derives an information threshold.
@@ -53,19 +106,19 @@ class SSNode {
   /**
      @brief Accessor for bipartitioning.
 
-     @param _lhSCount outputs the number of samples in LHS.
+     @param _sCount outputs the number of samples in LHS.
 
-     @param _lhIdxCount outputs the number of indices in LHS.
+     @param _lhExtent outputs the number of indices in LHS.
 
      @return void, with output reference parameters.
    */  
-  void inline LHSizes(unsigned int &_lhSCount, unsigned int &_lhIdxCount) const {
-    _lhSCount = sCount;
-    _lhIdxCount = lhIdxCount;
+  void inline LHSizes(unsigned int &_sCount, unsigned int &_lhExtent) const {
+    _sCount = sCount;
+    _lhExtent = lhExtent;
   }
 
-  
-  double NonTerminal(class SamplePred *samplePred, class PreTree *preTree, unsigned int splitIdx, int start, int end, unsigned int ptId, unsigned int &ptL, unsigned int &ptR, class Run *run);
+
+  bool NonTerminal(class Bottom *bottom, class PreTree *preTree, class Run *run, unsigned int extent, unsigned int ptId, double &sumExpl);
 };
 
 
@@ -73,11 +126,11 @@ class SSNode {
   @brief SplitSigs manage the SSNodes for a given level instantation.
 */
 class SplitSig {
-  int splitCount;
+  const unsigned int nPred;
+  unsigned int splitCount;
   SSNode *levelSS; // Workspace records for the current level.
- protected:
-  static unsigned int nPred;
 
+  
   /**
      @brief Looks up the SplitSig associated with a given pair.
 
@@ -97,14 +150,18 @@ class SplitSig {
     return levelSS[predIdx * splitCount + splitIdx];
   }
 
+
  public:
-  SSNode *ArgMax(unsigned int splitIdx, double minInfo) const;
-  static void Immutables(unsigned int _nPred, double _minRatio);
+ SplitSig(unsigned int _nPred) : nPred(_nPred), splitCount(0), levelSS(0) {
+  }
+
+  static void Immutables(double _minRatio);
   static void DeImmutables();
 
-  void LevelInit(int splitCount);
+  SSNode *ArgMax(unsigned int levelIdx, double gainMax) const;
+  void LevelInit(unsigned int _splitCount);
   void LevelClear();
-  void Write(unsigned int _splitIdx, unsigned int _predIdx, int _runIdx, unsigned int _bufIdx, unsigned int _sCount, unsigned int _lhIdxCount, double _info);
+  void Write(unsigned int _splitIdx, unsigned int _predIdx, unsigned int _setPos, unsigned int _bufIdx, const NuxLH &nux);
 };
 
 #endif

@@ -18,9 +18,11 @@
 
 // Testing only:
 //#include <iostream>
-using namespace std;
+//using namespace std;
 
 unsigned int RunSet::ctgWidth = 0;
+unsigned int RunSet::noStart = 0;
+
 
 /**
    Run objects are allocated per-tree, and live throughout training.
@@ -35,9 +37,7 @@ unsigned int RunSet::ctgWidth = 0;
    every split/predictor pair, regardless whether the pair is chosen for
    splitting in a given level (cf., 'mtry' and 'predProb').  The vector
    must be reallocated at each level, to accommodate changes in node numbering
-   introduced through splitting.  DenseRanks, however, which track the
-   dense components of sparse predictor values, employ a different mechanism
-   to track runs.
+   introduced through splitting.
 
    Run lengths for a given predictor decrease, although not necessarily
    monotonically, with splitting.  Hence once a pair becomes a singleton, the
@@ -61,8 +61,9 @@ unsigned int RunSet::ctgWidth = 0;
    @brief Constructor initializes predictor run length either to cardinality, 
    for factors, or to a nonsensical zero, for numerical.
  */
-Run::Run(unsigned int _ctgWidth) : ctgWidth(_ctgWidth) {
+Run::Run(unsigned int _ctgWidth, unsigned int nRow, unsigned int bagCount) : noRun(nRow * bagCount), ctgWidth(_ctgWidth) {
   RunSet::ctgWidth = ctgWidth;
+  RunSet::noStart = nRow; // Inattainable start value, irrespective of tree.
   runSet = 0;
   facRun = 0;
   bHeap = 0;
@@ -84,7 +85,7 @@ void Run::RunSets(const std::vector<unsigned int> &safeCount) {
   if (setCount > 0) {
     runSet = new RunSet[setCount];
     for (unsigned int setIdx = 0; setIdx < setCount; setIdx++) {
-      CountSafe(setIdx) = safeCount[setIdx];
+      CountSafe(setIdx, safeCount[setIdx]);
     }
   }
 }
@@ -265,6 +266,80 @@ void RunSet::HeapBinary() {
 
 
 /**
+   @brief Builds a run for the dense rank using residual values.
+
+   @param denseRank is the rank corresponding to the dense factor.
+
+   @param sCountTot is the total sample count over the node.
+
+   @param sumTot is the total sum of responses over the node.
+
+   @return void.
+ */
+void RunSet::WriteImplicit(unsigned int denseRank, unsigned int sCountTot, double sumTot, unsigned int denseCount, const double nodeSum[]) {
+  if (nodeSum != 0) {
+    for (unsigned int ctg = 0; ctg < ctgWidth; ctg++) {
+      SumCtgSet(ctg, nodeSum[ctg]);
+    }
+  }
+
+  for (unsigned int runIdx = 0; runIdx < runCount; runIdx++) {
+    sCountTot -= runZero[runIdx].sCount;
+    sumTot -= runZero[runIdx].sum;
+    if (nodeSum != 0) {
+      for (unsigned int ctg = 0; ctg < ctgWidth; ctg++) {
+	AccumCtg(ctg, -SumCtg(runIdx, ctg));
+      }
+    }
+  }
+
+  Write(denseRank, sCountTot, sumTot, denseCount);
+}
+
+
+/**
+   @brief Implicit runs are characterized by a start value of 'noStart'.
+
+   @return Whether this run is dense.
+ */
+bool FRNode::IsImplicit() {
+  return start == RunSet::noStart;
+}
+
+
+/**
+   @brief Determines whether it is necessary to expose the right-hand
+   runs.
+
+   Right-hand runs can often be omitted from consideration by
+   presetting a split's next-level contents all to the right-hand
+   index, then overwriting those known to lie in the left split.  The
+   left indices are always exposed, making this a convenient strategy.
+
+   This cannot be done if the left contains an implicit run, as implicit
+   run indices are not directly recorded.  In such cases a complementary
+   strategy is employed, in which all indices are preset to the left
+   index, with known right-hand indices overwritten.  Hence the
+   right-hand runs must be enumerated in such instances.
+
+   @return true iff right-hand runs must be exposed.
+ */
+bool RunSet::ImplicitLeft() {
+  if (!hasImplicit)
+    return false;
+
+  for (unsigned int runIdx = 0; runIdx < runsLH; runIdx++) {
+    unsigned int outSlot = outZero[runIdx];
+    if (runZero[outSlot].IsImplicit()) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+
+/**
    @brief Depopulates the heap associated with a pair and places sorted ranks into rank vector.
 
    @param pop is the number of elements to pop from the heap.
@@ -324,7 +399,7 @@ unsigned int RunSet::DeWide() {
    @return LHS index count.
 */
 unsigned int RunSet::LHBits(unsigned int lhBits, unsigned int &lhSampCt) {
-  unsigned int lhIdxCount = 0;
+  unsigned int lhExtent = 0;
   unsigned int slotSup = EffCount() - 1;
   runsLH = 0;
   lhSampCt = 0;
@@ -337,14 +412,23 @@ unsigned int RunSet::LHBits(unsigned int lhBits, unsigned int &lhSampCt) {
       //
       if ((lhBits & (1 << slot)) != 0) {
 	unsigned int sCount;
-        lhIdxCount += LHCounts(slot, sCount);
+        lhExtent += LHCounts(slot, sCount);
 	lhSampCt += sCount;
 	outZero[runsLH++] = slot;
       }
     }
   }
 
-  return lhIdxCount;
+  if (ImplicitLeft()) {
+    unsigned int rhIdx = runsLH;
+    for (unsigned int slot = 0; slot < EffCount(); slot++) {
+      if ((lhBits & (1 << slot)) == 0) {
+        outZero[rhIdx++] = slot;
+      }
+    }
+  }
+
+  return lhExtent;
 }
 
 
@@ -358,17 +442,17 @@ unsigned int RunSet::LHBits(unsigned int lhBits, unsigned int &lhSampCt) {
    @return LHS index count.
 */
 unsigned int RunSet::LHSlots(int cut, unsigned int &lhSampCt) {
-  unsigned int lhIdxCount = 0;
+  unsigned int lhExtent = 0;
   lhSampCt = 0;
 
   for (int outSlot = 0; outSlot <= cut; outSlot++) {
     unsigned int sCount;
-    lhIdxCount += LHCounts(outZero[outSlot], sCount);
+    lhExtent += LHCounts(outZero[outSlot], sCount);
     lhSampCt += sCount;
   }
 
   runsLH = cut + 1;
-  return lhIdxCount;  
+  return lhExtent;  
 }
 
 
@@ -452,8 +536,11 @@ unsigned int BHeap::SlotPop(BHPair pairVec[], int bot) {
 
   return ret;
 }
+
+
 /**
      @brief Looks up run parameters by indirection through output vector.
+     N.B.:  should not be called with a dense run.
 
      @param start outputs starting index of run.
 
@@ -461,12 +548,13 @@ unsigned int BHeap::SlotPop(BHPair pairVec[], int bot) {
 
      @return rank of referenced run, plus output reference parameters.
 */
-unsigned int RunSet::Bounds(unsigned int outSlot, unsigned int &start, unsigned int &end) {
+void RunSet::Bounds(unsigned int outSlot, unsigned int &start, unsigned int &extent) const {
   unsigned int slot = outZero[outSlot];
-  FRNode fRun = runZero[slot];
-  start = fRun.start;
-  end = fRun.end;
-
-  return fRun.rank;
+  runZero[slot].ReplayRef(start, extent);
 }
 
+
+unsigned int RunSet::Rank(unsigned int outSlot) const {
+  unsigned int slot = outZero[outSlot];
+  return runZero[slot].Rank();
+}

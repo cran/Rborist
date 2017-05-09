@@ -18,10 +18,9 @@
 #include "pretree.h"
 #include "forest.h"
 #include "predblock.h"
-#include "samplepred.h"
 
 //#include <iostream>
-using namespace std;
+//using namespace std;
 
 
 // Records terminal-node information for elements of the next level in the pre-tree.
@@ -30,7 +29,6 @@ using namespace std;
 // the need to revise dangling non-terminals from an earlier level.
 //
 
-unsigned int PreTree::nPred = 0;
 unsigned int PreTree::heightEst = 0;
 
 /**
@@ -42,9 +40,7 @@ unsigned int PreTree::heightEst = 0;
 
    @return void.
  */
-void PreTree::Immutables(unsigned int _nPred, unsigned int _nSamp, unsigned int _minH) {
-  nPred = _nPred;
-
+void PreTree::Immutables(unsigned int _nSamp, unsigned int _minH) {
   // Static initial estimate of pre-tree heights employs a minimal enclosing
   // balanced tree.  This is probably naive, given that decision trees
   // are not generally balanced.
@@ -64,7 +60,7 @@ void PreTree::Immutables(unsigned int _nPred, unsigned int _nSamp, unsigned int 
 
 
 void PreTree::DeImmutables() {
-  nPred = heightEst = 0;
+  heightEst = 0;
 }
 
 
@@ -75,19 +71,22 @@ void PreTree::DeImmutables() {
 
    @return void.
  */
-PreTree::PreTree(unsigned int _bagCount) : height(1), leafCount(1), bitEnd(0), bagCount(_bagCount) {
-  sample2PT = new unsigned int[bagCount];
-  for (unsigned int i = 0; i < bagCount; i++) {
-    sample2PT[i] = 0;
-  }
+PreTree::PreTree(const PMTrain *_pmTrain, unsigned int _bagCount) : pmTrain(_pmTrain), height(1), leafCount(1), bitEnd(0), bagCount(_bagCount), info(std::vector<double>(pmTrain->NPred())) {
+  std::fill(info.begin(), info.end(), 0.0);
+
   nodeCount = heightEst;   // Initial height estimate.
   nodeVec = new PTNode[nodeCount];
   nodeVec[0].id = 0; // Root.
   nodeVec[0].lhId = 0; // Initializes as terminal.
-  info = new double[nPred];
-  for (unsigned int i = 0; i < nPred; i++)
-    info[i] = 0.0;
   splitBits = BitFactory();
+}
+
+
+/**
+   @brief Per-tree finalizer.
+ */
+PreTree::~PreTree() {
+  delete [] nodeVec;
 }
 
 
@@ -127,18 +126,9 @@ void PreTree::Reserve(unsigned int height) {
 BV *PreTree::BitFactory() {
   // Should be wide enough to hold all factor bits for an entire tree:
   //    estimated #nodes * width of widest factor.
-  return new BV(nodeCount * PBTrain::CardMax());
+  return new BV(nodeCount * pmTrain->CardMax());
 }
 
-
-/**
-   @brief Per-tree finalizer.
- */
-PreTree::~PreTree() {
-  delete [] nodeVec;
-  delete [] sample2PT;
-  delete [] info;
-}
 
 /**
    @brief Speculatively sets the two offspring slots as terminal lh, rh and changes status of this from terminal to nonterminal.
@@ -151,13 +141,13 @@ PreTree::~PreTree() {
 
    @return void, with output reference parameters.
 */
-void PreTree::TerminalOffspring(unsigned int _parId, unsigned int &ptLH, unsigned int &ptRH) {
-  ptLH = height++;
+void PreTree::TerminalOffspring(unsigned int _parId) {
+  unsigned int ptLH = height++;
   nodeVec[_parId].lhId = ptLH;
   nodeVec[ptLH].id = ptLH;
   nodeVec[ptLH].lhId = 0;
 
-  ptRH = height++;
+  unsigned int ptRH = height++;
   nodeVec[ptRH].id = ptRH;
   nodeVec[ptRH].lhId = 0;
 
@@ -177,13 +167,14 @@ void PreTree::TerminalOffspring(unsigned int _parId, unsigned int &ptLH, unsigne
 
    @return void.
 */
-void PreTree::NonTerminalFac(double _info, unsigned int _predIdx, unsigned int _id, unsigned int &ptLH, unsigned int &ptRH) {
-  TerminalOffspring(_id, ptLH, ptRH);
+void PreTree::NonTerminalFac(double _info, unsigned int _predIdx, unsigned int _id) {
+  TerminalOffspring(_id);
   PTNode *ptS = &nodeVec[_id];
   ptS->predIdx = _predIdx;
   info[_predIdx] += _info;
+
   ptS->splitVal.offset = bitEnd;
-  bitEnd += PBTrain::FacCard(_predIdx);
+  bitEnd += pmTrain->FacCard(_predIdx);
 }
 
 
@@ -198,23 +189,18 @@ void PreTree::NonTerminalFac(double _info, unsigned int _predIdx, unsigned int _
 
    @return void.
 */
-void PreTree::NonTerminalNum(double _info, unsigned int _predIdx, unsigned int _rkLow, unsigned int _rkHigh, unsigned int _id, unsigned int &ptLH, unsigned int &ptRH) {
-  TerminalOffspring(_id, ptLH, ptRH);
+void PreTree::NonTerminalNum(double _info, unsigned int _predIdx, RankRange _rankRange, unsigned int _id) {
+  TerminalOffspring(_id);
   PTNode *ptS = &nodeVec[_id];
   ptS->predIdx = _predIdx;
-  ptS->splitVal.rkMean = 0.5 * (double(_rkLow) + double(_rkHigh));
   info[_predIdx] += _info;
-}
-
-
-double PreTree::Replay(SamplePred *samplePred, unsigned int predIdx, unsigned int bufBit, int start, int end, unsigned int ptId) {
-  return samplePred->Replay(sample2PT, predIdx, bufBit, start, end, ptId);
+  ptS->splitVal.rankRange = _rankRange;
 }
 
 
 /**
-   @brief Updates the high watermark for the preTree vector.  Forces a
-   reallocation to twice the existing size, if necessary.
+   @brief Ensures sufficient space to accomodate the next level for nodes
+   just split.  If necessary, doubles existing vector sizes.
 
    N.B.:  reallocations incur considerable resynchronization costs if
    precipitated from the coprocessor.
@@ -223,14 +209,14 @@ double PreTree::Replay(SamplePred *samplePred, unsigned int predIdx, unsigned in
 
    @param leafNext is the count of leaves in the upcoming level.
 
-   @return void.
+   @return current height;
 */
-void PreTree::CheckStorage(int splitNext, int leafNext) {
+void PreTree::Level(unsigned int splitNext, unsigned int leafNext) {
   if (height + splitNext + leafNext > nodeCount) {
     ReNodes();
   }
 
-  unsigned int bitMin = bitEnd + splitNext * PBTrain::CardMax();
+  unsigned int bitMin = bitEnd + splitNext * pmTrain->CardMax();
   if (bitMin > 0) {
     splitBits = splitBits->Resize(bitMin);
   }
@@ -238,14 +224,14 @@ void PreTree::CheckStorage(int splitNext, int leafNext) {
 
 
 /**
- @brief Guestimates safe height by doubling high watermark.
+ @brief Guesstimates safe height by doubling high watermark.
 
  @return void.
 */
 void PreTree::ReNodes() {
   nodeCount <<= 1;
   PTNode *PTtemp = new PTNode[nodeCount];
-  for (int i = 0; i < height; i++)
+  for (unsigned int i = 0; i < height; i++)
     PTtemp[i] = nodeVec[i];
 
   delete [] nodeVec;
@@ -264,14 +250,14 @@ void PreTree::ReNodes() {
 
   @return void, with side-effected forest.
 */
-const std::vector<unsigned int> PreTree::DecTree(Forest *forest, unsigned int tIdx, double predInfo[]) {
+const std::vector<unsigned int> PreTree::DecTree(ForestTrain *forest, unsigned int tIdx, std::vector<double> &predInfo) {
   forest->Origins(tIdx);
   forest->NodeInit(height);
   NodeConsume(forest, tIdx);
   forest->BitProduce(splitBits, bitEnd);
   delete splitBits;
 
-  for (unsigned int i = 0; i < nPred; i++)
+  for (unsigned int i = 0; i < info.size(); i++)
     predInfo[i] += info[i];
 
   return FrontierToLeaf(forest, tIdx);
@@ -285,9 +271,9 @@ const std::vector<unsigned int> PreTree::DecTree(Forest *forest, unsigned int tI
 
    @return void, with output reference parameter.
 */
-void PreTree::NodeConsume(Forest *forest, unsigned int tIdx) {
-  for (int idx = 0; idx < height; idx++) {
-    nodeVec[idx].Consume(forest, tIdx);
+void PreTree::NodeConsume(ForestTrain *forest, unsigned int tIdx) {
+  for (unsigned int idx = 0; idx < height; idx++) {
+    nodeVec[idx].Consume(pmTrain, forest, tIdx);
   }
 }
 
@@ -301,40 +287,57 @@ void PreTree::NodeConsume(Forest *forest, unsigned int tIdx) {
 
    @return void, with side-effected Forest.
  */
-void PTNode::Consume(Forest *forest, unsigned int tIdx) {
+void PTNode::Consume(const PMTrain *pmTrain, ForestTrain *forest, unsigned int tIdx) {
   if (lhId > 0) { // i.e., nonterminal
-    forest->NonterminalProduce(tIdx, id, predIdx, lhId - id, PredBlock::IsFactor(predIdx) ? splitVal.offset : splitVal.rkMean);
+    if (pmTrain->IsFactor(predIdx)) {
+      forest->OffsetProduce(tIdx, id, predIdx, lhId - id, splitVal.offset);
+    }
+    else {
+      forest->RankProduce(tIdx, id, predIdx, lhId - id, splitVal.rankRange.rankLow, splitVal.rankRange.rankHigh);
+    }
   }
 }
 
 
 /**
-   @brief Copies frontier map, but replaces node indices with indices of
-   corresponding leaves.  Also sets terminal forest nodes.
+   @brief Absorbs the terminal list from a completed subtree.
+
+   @param stTerm are subtree-relative indices.  These must be mapped to
+   sample indices if the subtree is proper.
+
+   @return void, with side-effected frontier map.
+ */
+void PreTree::SubtreeFrontier(const std::vector<TermKey> &stKey, const std::vector<unsigned int> &stTerm) {
+  for (auto & key : stKey) {
+    termKey.push_back(key);
+  }
+
+  for(auto & stIdx : stTerm) {
+    termST.push_back(stIdx);
+  }
+}
+
+
+/**
+   @brief Constructs mapping from sample indices to leaf indices.
 
    @param tIdx is the index of the tree being produced.
 
-   @return Pointer to rewritten map, with side-effected Forest.
+   @return Reference to rewritten map, with side-effected Forest.
  */
-const std::vector<unsigned int> PreTree::FrontierToLeaf(Forest *forest, unsigned int tIdx) {
-  // Initializes with unattainable leaf-index value.
-  std::vector<unsigned int> nodeLeaf(height);
-  std::fill(nodeLeaf.begin(), nodeLeaf.end(), leafCount);
-
-  std::vector<unsigned int> frontierMap(bagCount);
+const std::vector<unsigned int> PreTree::FrontierToLeaf(ForestTrain *forest, unsigned int tIdx) {
+  std::vector<unsigned int> frontierMap(termST.size());
   unsigned int leafIdx = 0;
-  for (unsigned int sIdx = 0; sIdx < bagCount; sIdx++) {
-    unsigned int ptIdx = sample2PT[sIdx];
-    if (nodeLeaf[ptIdx] == leafCount) { // Unseen so far.
-      unsigned int nodeIdx = sample2PT[sIdx];
-      forest->LeafProduce(tIdx, nodeIdx, leafIdx);
-      nodeLeaf[ptIdx] = leafIdx++;
+  unsigned int check = 0;
+  for (auto & key : termKey) {
+    for (unsigned int idx = key.base ; idx < key.base + key.extent; idx++) {
+      unsigned int stIdx = termST[idx];
+      frontierMap[stIdx] = leafIdx;
+      check++;
     }
-    frontierMap[sIdx] = nodeLeaf[ptIdx];
+    forest->LeafProduce(tIdx, key.ptId, leafIdx++);
   }
-  //  if (leafCount != leafIdx)
-  //cout << "Leaf count mismatch at frontier" << endl;
-  
+
   return frontierMap;
 }
 
@@ -345,5 +348,3 @@ const std::vector<unsigned int> PreTree::FrontierToLeaf(Forest *forest, unsigned
 unsigned int PreTree::BitWidth() {
   return BV::SlotAlign(bitEnd);
 }
-
-
