@@ -54,10 +54,10 @@ void SPNode::DeImmutables() {
 /**
    @brief Base class constructor.
  */
-SamplePred::SamplePred(unsigned int _nPred, unsigned int _bagCount, unsigned int _bufferSize) : bagCount(_bagCount), nPred(_nPred), bufferSize(_bufferSize), pitchSP(_bagCount * sizeof(SamplePred)), pitchSIdx(_bagCount * sizeof(unsigned int)) {
+SamplePred::SamplePred(unsigned int _nPred, unsigned int _bagCount, unsigned int _bufferSize) : bagCount(_bagCount), nPred(_nPred), bufferSize(_bufferSize), pitchSP(_bagCount * sizeof(SamplePred)), pitchSIdx(_bagCount * sizeof(unsigned int)), pathIdx(_bufferSize) {
   indexBase = new unsigned int[2* bufferSize];
   nodeVec = new SPNode[2 * bufferSize];
-
+  
   stageOffset.reserve(nPred);
   stageExtent.reserve(nPred);
 }
@@ -91,19 +91,25 @@ SamplePred *SamplePred::Factory(unsigned int _nPred, unsigned int _bagCount, uns
 
    @param predIdx is the predictor index at which to initialize.
 
-   @return void.
+   @return true iff entire staged set has single rank.  This might be
+   a property of the training data or may arise from bagging. 
  */
-void SamplePred::Stage(const std::vector<StagePack> &stagePack, unsigned int predIdx, unsigned int safeOffset, unsigned int extent) {
+bool SamplePred::Stage(const std::vector<StagePack> &stagePack, unsigned int predIdx, unsigned int safeOffset, unsigned int extent) {
   stageOffset[predIdx] = safeOffset;
   stageExtent[predIdx] = extent;
 
+  const unsigned int bufIdx = 0;
   unsigned int *smpIdx;
-  SPNode *spn = Buffers(predIdx, 0, smpIdx);
+  SPNode *spn = Buffers(predIdx, bufIdx, smpIdx);
   for (unsigned int idx = 0; idx < stagePack.size(); idx++) {
     unsigned int sIdx = spn++->Init(stagePack[idx]);
     *smpIdx++ = sIdx;
   }
-  spn = Buffers(predIdx, 0, smpIdx);
+
+  // Singleton iff either:
+  //   Dense and all indices implicit.
+  //   Not dense and all ranks equal.
+  return bagCount == stagePack.size() ? SingleRank(predIdx, bufIdx, 0, bagCount) : (stagePack.size() == 0 ? true : false);
 }
 
 
@@ -155,90 +161,39 @@ double SamplePred::BlockReplay(unsigned int predIdx, unsigned int sourceBit, uns
 }
 
 
-SPNode *SamplePred::RestageStxGen(unsigned int reachOffset[], unsigned int predIdx, unsigned int bufIdx, IdxPath *stPath, unsigned int pathMask, unsigned int startIdx, unsigned int extent, bool nodeRel) {
+/**
+   @brief Pass-through to Path method.  Looks up reaching cell in appropriate
+   buffer.
+
+   @return void.
+ */
+void SamplePred::Prepath(const IdxPath *idxPath, const unsigned int reachBase[], unsigned int predIdx, unsigned int bufIdx, unsigned int startIdx, unsigned int extent, unsigned int pathMask, bool idxUpdate, unsigned int pathCount[]) {
+  idxPath->Prepath(reachBase, idxUpdate, startIdx, extent, pathMask, BufferIndex(predIdx, bufIdx), &pathIdx[StageOffset(predIdx)], pathCount);
+}
+
+
+/**
+   @brief Restages and tabultates rank counts.
+
+   @return void.
+ */
+void SamplePred::RestageRank(unsigned int predIdx, unsigned int bufIdx, unsigned int startIdx, unsigned int extent, unsigned int reachOffset[], unsigned int rankPrev[], unsigned int rankCount[]) {
   SPNode *source, *targ;
   unsigned int *idxSource, *idxTarg;
   Buffers(predIdx, bufIdx, source, idxSource, targ, idxTarg);
 
+  PathT *pathBlock = &pathIdx[StageOffset(predIdx)];
   for (unsigned int idx = startIdx; idx < startIdx + extent; idx++) {
-    unsigned int relSource = idxSource[idx];
-    unsigned int path;
-    if (stPath->PathLive(relSource, pathMask, path)) {
+    unsigned int path = pathBlock[idx];
+    if (path != NodePath::noPath) {
+      SPNode spNode = source[idx];
+      unsigned int rank = spNode.Rank();
+      rankCount[path] += (rank == rankPrev[path] ? 0 : 1);
+      rankPrev[path] = rank;
       unsigned int destIdx = reachOffset[path]++;
-      targ[destIdx] = source[idx];
-      // RelFront() performs (slow) sIdx-to-relIdx mapping:  transition only.
-      idxTarg[destIdx] = nodeRel ? stPath->RelFront(relSource) : relSource;
+      targ[destIdx] = spNode;
+      idxTarg[destIdx] = idxSource[idx];
     }
   }
-
-  return targ;
 }
 
-
-
-SPNode *SamplePred::RestageStxOne(unsigned int reachOffset[], unsigned int predIdx, unsigned int bufIdx, IdxPath *stPath, unsigned int pathMask, unsigned int startIdx, unsigned int extent, bool nodeRel) {
-  SPNode *source, *targ;
-  unsigned int *idxSource, *idxTarg;
-  Buffers(predIdx, bufIdx, source, idxSource, targ, idxTarg);
-
-  unsigned int leftOff = reachOffset[0];
-  unsigned int rightOff = reachOffset[1];
-  for (unsigned int idx = startIdx; idx < startIdx + extent; idx++) {
-    unsigned int relSource = idxSource[idx];
-    unsigned int path;
-    if (stPath->PathLive(relSource, pathMask, path)) {
-      unsigned int destIdx = path == 0 ? leftOff++ : rightOff++;
-      targ[destIdx] = source[idx];
-      // RelFront() performs (slow) sIdx-to-relIdx mapping:  transition only.
-      idxTarg[destIdx] = nodeRel ? stPath->RelFront(relSource) : relSource;
-    }
-  }
-
-  reachOffset[0] = leftOff;
-  reachOffset[1] = rightOff;
-
-  return targ;
-}
-
-
-SPNode *SamplePred::RestageNdxGen(unsigned int reachOffset[], const unsigned int reachBase[], unsigned int predIdx, unsigned int bufIdx, IdxPath *frontPath, unsigned int pathMask, unsigned int startIdx, unsigned int extent) {
-  SPNode *source, *targ;
-  unsigned int *idxSource, *idxTarg;
-  Buffers(predIdx, bufIdx, source, idxSource, targ, idxTarg);
-
-  for (unsigned int idx = startIdx; idx < startIdx + extent; idx++) {
-    unsigned int relSource = idxSource[idx];
-    unsigned int path, offRel;
-    if (frontPath->RefLive(relSource, pathMask, path, offRel)) {
-      unsigned int destIdx = reachOffset[path]++;
-      targ[destIdx] = source[idx];
-      idxTarg[destIdx] = reachBase[path] + offRel;
-    }
-  }
-
-  return targ;
-}
-
-
-SPNode *SamplePred::RestageNdxOne(unsigned int reachOffset[], const unsigned int reachBase[], unsigned int predIdx, unsigned int bufIdx, IdxPath *frontPath, unsigned int pathMask, unsigned int startIdx, unsigned int extent) {
-  SPNode *source, *targ;
-  unsigned int *idxSource, *idxTarg;
-  Buffers(predIdx, bufIdx, source, idxSource, targ, idxTarg);
-
-  unsigned int leftOff = reachOffset[0];
-  unsigned int rightOff = reachOffset[1];
-  for (unsigned int idx = startIdx; idx < startIdx + extent; idx++) {
-    unsigned int relSource = idxSource[idx];
-    unsigned int path, offRel;
-    if (frontPath->RefLive(relSource, pathMask, path, offRel)) {
-      unsigned int destIdx = path == 0 ? leftOff++ : rightOff++;
-      targ[destIdx] = source[idx];
-      idxTarg[destIdx] = reachBase[path] + offRel;
-    }
-  }
-
-  reachOffset[0] = leftOff;
-  reachOffset[1] = rightOff;
-
-  return targ;
-}

@@ -48,7 +48,15 @@
 #         rs <- Rborist(x, y, nLevel = 1)
 
 ## ---- eval = FALSE-------------------------------------------------------
-#         rs <- Rborist(x, y, minRatio = 0.1}
+#         rs <- Rborist(x, y, minRatio = 0.1)
+
+## ---- eval = FALSE-------------------------------------------------------
+#         rs <- Rborist(x, y, autoCompress = 0.4)
+
+## ---- eval=FALSE---------------------------------------------------------
+#         rs <- Rborist(x, y)
+#         ...
+#         rs <- Streamline(rs)
 
 ## ---- eval = FALSE-------------------------------------------------------
 #         rs <- Rborist(x, y, rowWeight = rep(1/nrow(y), nrow(y))

@@ -59,7 +59,8 @@ class RowRank {
   const unsigned int nRow;
   const unsigned int nPred;
   const unsigned int noRank; // Inattainable rank value.
-  static constexpr double plurality = 0.25;
+  unsigned int nPredDense;
+  std::vector<unsigned int> denseIdx;
 
   // Jagged array holding numerical predictor values for split assignment.
   const unsigned int *numOffset; // Per-predictor starting offsets.
@@ -72,6 +73,7 @@ class RowRank {
   std::vector<unsigned int> rrCount;
   std::vector<unsigned int> rrStart;
   std::vector<unsigned int> safeOffset; // Either an index or an accumulated count.
+  const double autoCompress; // Threshold percentage for autocompression.
 
   
   static void FacSort(const unsigned int predCol[], unsigned int _nRow, std::vector<unsigned int> &rowOut, std::vector<unsigned int> &rankOut, std::vector<unsigned int> &rle);
@@ -113,14 +115,19 @@ class RowRank {
   static void PreSortFac(const unsigned int _feFac[], unsigned int _nPredFac, unsigned int _nRow, std::vector<unsigned int> &rowOut, std::vector<unsigned int> &rankOut, std::vector<unsigned int> &runLength);
 
 
-  RowRank(const class PMTrain *pmTrain, const unsigned int feRow[], const unsigned int feRank[], const unsigned int _numOffset[], const double _numVal[], const unsigned int feRLE[], unsigned int feRLELength);
+  RowRank(const class PMTrain *pmTrain, const unsigned int feRow[], const unsigned int feRank[], const unsigned int _numOffset[], const double _numVal[], const unsigned int feRLE[], unsigned int feRLELength, double _autCompress);
   ~RowRank();
 
   
   inline unsigned int NPred() const {
     return nPred;
   }
-  
+
+
+  inline unsigned int NoRank() const {
+    return noRank;
+  }
+
   
   inline unsigned int ExplicitCount(unsigned int predIdx) const {
     return rrCount[predIdx];
@@ -175,6 +182,16 @@ class RowRank {
   }
 
 
+  inline unsigned int NPredDense() const {
+    return nPredDense;
+  }
+
+
+  inline const std::vector<unsigned int> &DenseIdx() const {
+    return denseIdx;
+  }
+
+  
   /**
      @brief Derives split values for a numerical predictor by synthesizing
      a fractional intermediate rank and interpolating.

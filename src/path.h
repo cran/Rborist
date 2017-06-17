@@ -20,6 +20,7 @@
 #include <cstdint>
 #include <vector>
 
+#include "param.h"
 
 /**
    @brief Records index, start and extent for path reached from MRRA.
@@ -31,7 +32,7 @@ class NodePath {
   unsigned int relBase; // Dense starting position.
  public:
 
-  static constexpr unsigned int pathMax = 8 * sizeof(unsigned char) - 1;
+  static constexpr unsigned int pathMax = 8 * sizeof(PathT) - 1;
   static constexpr unsigned int noPath = 1 << pathMax;
 
   
@@ -92,6 +93,7 @@ class IdxPath {
  public:
 
   IdxPath(unsigned int _idxLive);
+  void Prepath(const unsigned int reachBase[], bool idxUpdate, unsigned int startIdx, unsigned int extent, unsigned int pathMask, unsigned int idxVec[], PathT prepath[], unsigned int pathCount[]) const;
 
   /**
      @brief When appropriate, introduces node-relative indexing at the
@@ -121,7 +123,7 @@ class IdxPath {
   }
 
 
-  inline unsigned int RelFront(unsigned int idx) {
+  inline unsigned int RelFront(unsigned int idx) const {
     return relFront[idx];
   }
 
@@ -187,45 +189,29 @@ class IdxPath {
 
   
   /**
-     @brief Looks up the path leading to the front level.
+     @brief Looks up the path leading to the front level and updates
+     the index, if either in a switching to a node-relative regime.
 
-     @param idx indexes the path vector.
+     @param idx inputs the path vector index and outputs the index to
+     be used in the next level.
 
-     @param path outputs the path to front level, if live.x
-
-     @return true iff path to front is not extinct.
+     @return path to input index.
    */
-  inline bool PathLive(unsigned int idx, unsigned int pathMask, unsigned int &path) const {
-    if (!IsLive(idx)) {
-      return false;
+  inline unsigned int IdxUpdate(unsigned int &idx, unsigned int pathMask, const unsigned int reachBase[], bool idxUpdate) const {
+    unsigned int path;
+    if (IsLive(idx)) {
+      path = pathFront[idx] & pathMask;
+      // Avoids irregular update unless necessary:
+      idx = reachBase != nullptr ? (reachBase[path] + offFront[idx]) : (idxUpdate ? RelFront(idx) : idx);
+    }
+    else {
+      path = NodePath::noPath;
     }
 
-    path = pathFront[idx] & pathMask;
-    return true;
+    return path;
   }
 
 
-  /**
-     @brief Determines a sample's path and offset coordinates with respect
-     to the front level.
-
-     @param idx is the node-relative index of the sample.
-
-     @param path outputs the path offset of the sample in the front level.
-
-     @return true iff sample at index lies on live path.
-   */
-  inline bool RefLive(unsigned int idx, unsigned int pathMask, unsigned int &path, unsigned int &offRel) const {
-    if (!IsLive(idx)) {
-      return false;
-    }
-
-    path = pathFront[idx] & pathMask;
-    offRel = offFront[idx];
-    return true;
-  }
-
-  
   /**
      @brief Determines whether indexed path is live and looks up
      corresponding front index.
@@ -282,6 +268,8 @@ class IdxPath {
       }
     }
   }
+
+
 };
 
 #endif
