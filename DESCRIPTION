@@ -1,8 +1,8 @@
 Package: Rborist
 Title: Extensible, Parallelizable Implementation of the Random Forest
         Algorithm
-Version: 0.1-7
-Date: 2017-6-17
+Version: 0.1-8
+Date: 2017-8-1
 Author: Mark Seligman
 Maintainer: Mark Seligman <mseligman@suiji.org>
 SystemRequirements: gcc (release >= 4.9).
@@ -16,6 +16,6 @@ VignetteBuilder: knitr
 Enhances: forestFloor
 LinkingTo: Rcpp, RcppArmadillo
 NeedsCompilation: yes
-Packaged: 2017-06-17 03:27:56 UTC; seligman
+Packaged: 2017-07-31 23:06:55 UTC; seligman
 Repository: CRAN
-Date/Publication: 2017-06-17 08:13:58 UTC
+Date/Publication: 2017-08-01 05:00:56 UTC

@@ -21,6 +21,7 @@
                 autoCompress = 0.25,              
                 ctgCensus = "votes",
                 classWeight = NULL,
+                maxLeaf = 0,
                 minInfo = 0.01,
                 minNode = ifelse(is.factor(y), 2, 3),
                 nLevel = 0,
@@ -56,7 +57,7 @@
 
   if (autoCompress < 0.0 || autoCompress > 1.0)
       stop("Autocompression plurality must be a percentage.")
-          
+
   if (is.null(regMono)) {
     regMono <- rep(0.0, nPred)
   }
@@ -80,6 +81,11 @@
   if (nSamp == 0) {
     nSamp <- ifelse(withRepl, nRow, round((1-exp(-1)) * nRow))
   }
+    
+  if (maxLeaf < 0)
+      stop("Leaf maximum must be nonnegative.")
+  if (maxLeaf > nSamp)
+      warning("Specified leaf maximum exceeds number of samples.")
 
   if (predProb != 0.0 && predFixed != 0)
       stop("Conflicting predictor sampling specifications:  Bernoulli and fixed.")
@@ -189,16 +195,19 @@
     if (any(regMono != 0)) {
       stop("Monotonicity undefined for categorical response")
     }
-    train <- .Call("RcppTrainCtg", predBlock, preFormat$rowRank, y, nTree, nSamp, rowWeight, withRepl, treeBlock, minNode, minInfo, nLevel, predFixed, splitQuant, probVec, autoCompress, thinLeaves, classWeight)
+    train <- tryCatch(.Call("RcppTrainCtg", predBlock, preFormat$rowRank, y, nTree, nSamp, rowWeight, withRepl, treeBlock, minNode, minInfo, nLevel, maxLeaf, predFixed, splitQuant, probVec, autoCompress, thinLeaves, FALSE, classWeight), error=function(e){stop(e)})
   }
   else {
-    train <- .Call("RcppTrainReg", predBlock, preFormat$rowRank, y, nTree, nSamp, rowWeight, withRepl, treeBlock, minNode, minInfo, nLevel, predFixed, splitQuant, probVec, autoCompress, thinLeaves, regMono)
+    train <- tryCatch(.Call("RcppTrainReg", predBlock, preFormat$rowRank, y, nTree, nSamp, rowWeight, withRepl, treeBlock, minNode, minInfo, nLevel, maxLeaf, predFixed, splitQuant, probVec, autoCompress, thinLeaves, FALSE, regMono), error=function(e) {stop(e)})
   }
 
   predInfo <- train[["predInfo"]]
   names(predInfo) <- predBlock$colnames
-  training = list(
-    info = predInfo
+    training = list(
+        call = match.call(),
+        info = predInfo,
+        version = (sessionInfo())$otherPkgs$Rborist$Version,
+        diag = train[["diag"]]
   )
 
   if (noValidate) {
@@ -239,14 +248,14 @@ PredBlock <- function(x, sigTrain = NULL) {
     if (length(numIdx) + length(facIdx) != ncol(x)) {
       stop("Frame column with unsupported data type")
     }
-    return(.Call("RcppPredBlockFrame", x, numIdx, facIdx, facCard, sigTrain))
+    return(tryCatch(.Call("RcppPredBlockFrame", x, numIdx, facIdx, facCard, sigTrain), error = function(e) {stop(e)} ))
   }
   else if (is.matrix(x)) {
     if (is.integer(x)) {
-      return(.Call("RcppPredBlockNum", data.matrix(x)))
+      return(tryCatch(.Call("RcppPredBlockNum", data.matrix(x)), error=function(e) {stop(e)} ))
     }
     else if (is.numeric(x)) {
-      return(.Call("RcppPredBlockNum", x))
+      return(tryCatch(.Call("RcppPredBlockNum", x), error=function(e) {stop(e)}))
     }
     else if (is.character(x)) {
       stop("Character data not yet supported")
@@ -256,7 +265,7 @@ PredBlock <- function(x, sigTrain = NULL) {
     }
   }
   else if (inherits(x, "dgCMatrix")) {
-     return(.Call("RcppPredBlockSparse", x))
+     return(tryCatch(.Call("RcppPredBlockSparse", x), error= print))
   }
   else {
     stop("Expecting data frame or matrix")

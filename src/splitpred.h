@@ -25,8 +25,8 @@
    @brief Encapsulates information needed to drive splitting.
  */
 class SplitCoord {
-  unsigned int splitPos; // Position in containing vector.
-  unsigned int levelIdx;
+  unsigned int vecPos; // Position in containing vector.
+  unsigned int splitIdx;
   unsigned int predIdx;
   unsigned int idxStart; // Per node.
   unsigned int sCount;  // Per node.
@@ -38,14 +38,14 @@ class SplitCoord {
   unsigned char bufIdx; // Per pair.
  public:
 
-  bool Preschedule(class Bottom *bottom, unsigned int _levelIdx, unsigned int _predIdx, std::vector<SplitCoord> &splitCoord);
-  void Schedule(const class Bottom *bottom, const class IndexLevel &indexLevel, unsigned int noSet, std::vector<unsigned int> &runCount, std::vector<SplitCoord> &sc2);
-  void InitLate(const class Bottom *bottom, const class IndexLevel &index, unsigned int _splitPos, unsigned int _setIdx);
+  void InitEarly(unsigned int _splitIdx, unsigned int _predIdx, unsigned int _bufIdx);
+  void Schedule(const class Level *levelFront, const class IndexLevel *indexLevel, unsigned int noSet, std::vector<unsigned int> &runCount, std::vector<SplitCoord> &sc2);
+  void InitLate(const class Level *levelFront, const class IndexLevel *index, unsigned int _splitPos, unsigned int _setIdx);
 
-  void Split(const class SPReg *spReg, const class Bottom *bottom, const class SamplePred *samplePred, const class IndexLevel &index);
-  void Split(class SPCtg *spCtg, const class Bottom *bottom, const class SamplePred *samplePred, const class IndexLevel &index);
-  void SplitNum(const class SPReg *splitReg, const class Bottom *bottom, const class SPNode spn[]);
-  void SplitNum(class SPCtg *splitCtg, const class Bottom *bottom, const class SPNode spn[]);
+  void Split(const class SPReg *spReg, const class SamplePred *samplePred);
+  void Split(class SPCtg *spCtg, const class SamplePred *samplePred);
+  void SplitNum(const class SPReg *splitReg, const class SPNode spn[]);
+  void SplitNum(class SPCtg *splitCtg, const class SPNode spn[]);
   bool SplitNum(const class SPReg *spReg, const class SPNode spn[], class NuxLH &nux);
   bool SplitNum(const class SPNode spn[], class NuxLH &nux);
   bool SplitNumDense(const class SPNode spn[], const class SPReg *spReg, class NuxLH &nux);
@@ -55,8 +55,8 @@ class SplitCoord {
   bool NumCtgDense(class SPCtg *spCtg, const class SPNode spn[], class NuxLH &nux);
   bool NumCtg(class SPCtg *spCtg, const class SPNode spn[], class NuxLH &nux);
   unsigned int NumCtgGini(SPCtg *spCtg, const class SPNode spn[], unsigned int idxNext, unsigned int idxFinal, unsigned int &sCountL, unsigned int &rkRight, double &sumL, double &ssL, double &ssR, double &maxGini, unsigned int &rankLH, unsigned int &rankRH, unsigned int &rhInf);
-  void SplitFac(const class SPReg *splitReg, const class Bottom *bottom, const class SPNode spn[]);
-  void SplitFac(const class SPCtg *splitCtg, const class Bottom *bottom, const class SPNode spn[]);
+  void SplitFac(const class SPReg *splitReg, const class SPNode spn[]);
+  void SplitFac(const class SPCtg *splitCtg, const class SPNode spn[]);
   bool SplitFac(const class SPReg *spReg, const class SPNode spn[], class NuxLH &nux);
   bool SplitFac(const class SPCtg *spCtg, const class SPNode spn[], class NuxLH &nux);
   bool SplitBinary(const class SPCtg *spCtg, class RunSet *runSet, class NuxLH &nux);
@@ -77,52 +77,41 @@ class SplitCoord {
 //
 class SplitPred {
   const class RowRank *rowRank;
-  static unsigned int predFixed;
-  static const double *predProb;
-
-  void SetPrebias(class IndexLevel &level);
-  void SplitFlags(bool unsplitable[]);
-  void PrescheduleProb(unsigned int levelIdx, const double ruPred[]);
-  void PrescheduleFixed(unsigned int levelIdx, const double ruPred[], class BHPair heap[]);
-  bool Preschedule(unsigned int levelIdx, unsigned int predIdx);
   
  protected:
   const class PMTrain *pmTrain;
-  static unsigned int nPred;
   const unsigned int bagCount;
   const unsigned int noSet; // Unreachable setIdx for SplitCoord.
-  class Bottom *bottom;
-  unsigned int levelCount; // # subtree nodes at current level.
+  unsigned int splitCount; // # subtree nodes at current level.
   class Run *run;
   std::vector<SplitCoord> splitCoord; // Schedule of splits.
-  void Splitable(const std::vector<bool> &unsplitable);
- public:
-  class SamplePred *samplePred;
-  SplitPred(const class PMTrain *_pmTrain, const class RowRank *_rowRank, class SamplePred *_samplePred, unsigned int bagCount);
-  static void Immutables(unsigned int _nPred, unsigned int _ctgWidth, unsigned int _predFixed, const double _predProb[], const double _regMono[]);
-  static void DeImmutables();
-  void ScheduleSplits(const class IndexLevel &index);
+  void ArgMax(std::vector<class SSNode> &argMax);
+
+public:
+  class SplitSig *splitSig;
+
+  SplitPred(const class PMTrain *_pmTrain, const class RowRank *_rowRank, unsigned int bagCount);
+
+  void ScheduleSplits(const class IndexLevel *index, const class Level *levelFront);
+  void Preschedule(unsigned int splitIdx, unsigned int predIdx, unsigned int bufIdx);
   unsigned int DenseRank(unsigned int predIdx) const;
   bool IsFactor(unsigned int predIdx) const;
   unsigned int NumIdx(unsigned int predIdx) const;
+  void SSWrite(unsigned int levelIdx, unsigned int predIdx, unsigned int setPos, unsigned int bufIdx, const class NuxLH &nux) const;
 
   class Run *Runs() {
     return run;
   }
 
   class RunSet *RSet(unsigned int setIdx) const;
+  void LevelInit(class IndexLevel *index);
+  void Split(const class SamplePred *samplePred, std::vector<class SSNode> &argMax);
 
-  void SetBottom(class Bottom *_bottom) {
-    bottom = _bottom;
-  }
-
-  virtual void Split(const class IndexLevel &index) = 0;
-  
+  virtual void Split(const class SamplePred *samplePred) = 0;
   virtual ~SplitPred();
-  virtual void LevelInit(class IndexLevel &index);
   virtual void RunOffsets(const std::vector<unsigned int> &safeCounts) = 0;
-  virtual void LevelPreset(const class IndexLevel &index, std::vector<bool> &unsplitable) = 0;
-  virtual double Prebias(const class IndexLevel &index, unsigned int levelIdx) = 0;
+  virtual void LevelPreset(class IndexLevel *index) = 0;
+  virtual double Prebias(unsigned int splitIdx, double sum, unsigned int sCount) const = 0;
   virtual void LevelClear();
 };
 
@@ -132,23 +121,35 @@ class SplitPred {
  */
 class SPReg : public SplitPred {
   static unsigned int predMono;
-  static const double *feMono;
+  static std::vector<double> feMono;
   double *ruMono;
 
-  void Split(const class IndexLevel &index);
+  void Split(const class SamplePred *samplePred);
 
  public:
   unsigned int Residuals(const SPNode spn[], unsigned int idxStart, unsigned int idxEnd, unsigned int denseRank, unsigned int &denseLeft, unsigned int &denseRight, double &sumDense, unsigned int &sCountDense) const;
   static void Immutables(unsigned int _nPred, const double *_mono);
   static void DeImmutables();
-  SPReg(const class PMTrain *_pmTrain, const class RowRank *_rowRank, class SamplePred *_samplePred, unsigned int bagCount);
+  SPReg(const class PMTrain *_pmTrain, const class RowRank *_rowRank, unsigned int bagCount);
   ~SPReg();
   int MonoMode(unsigned int splitIdx, unsigned int predIdx) const;
   void RunOffsets(const std::vector<unsigned int> &safeCount);
-  void LevelPreset(const class IndexLevel &index, std::vector<bool> &unsplitable);
-  double Prebias(const class IndexLevel &index, unsigned int spiltIdx);
-  void LevelInit(class IndexLevel &index);
+  void LevelPreset(class IndexLevel *index);
   void LevelClear();
+
+  
+/**
+  @brief Weighted-variance pre-bias computation for regression response.
+
+  @param sum is the sum of samples subsumed by the index node.
+
+  @param sCount is the number of samples subsumed by the index node.
+
+  @return square squared, divided by sample count.
+*/
+  inline double Prebias(unsigned int splitIdx, double sum, unsigned int sCount) const {
+    return (sum * sum) / sCount;
+  }
 };
 
 
@@ -161,27 +162,45 @@ class SPCtg : public SplitPred {
   static constexpr double minSumL = 1.0e-8;
   static constexpr double minSumR = 1.0e-5;
 
-  static unsigned int ctgWidth;
+  const unsigned int nCtg;
   std::vector<double> sumSquares; // Per-level sum of squares, by split.
   std::vector<double> ctgSum; // Per-level sum, by split/category pair.
   std::vector<double> ctgSumAccum; // Numeric predictors:  accumulate sums.
-  const std::vector<class SampleNode> &sampleCtg;
-  void LevelPreset(const class IndexLevel &index, std::vector<bool> &unsplitable);
-  double Prebias(const class IndexLevel &index, unsigned int levelIdx);
+  void LevelPreset(class IndexLevel *index);
   void LevelClear();
-  void Split(const class IndexLevel &index);
+  void Split(const class SamplePred *samplePred);
   void RunOffsets(const std::vector<unsigned int> &safeCount);
   unsigned int LHBits(unsigned int lhBits, unsigned int pairOffset, unsigned int depth, unsigned int &lhSampCt);
   void LevelInitSumR(unsigned int nPredNum);
 
 
+  /**
+     @brief Gini pre-bias computation for categorical response.
+
+     @param splitIdx is the level-relative node index.
+
+     @param sCount is the number of samples subsumed by the index node.
+
+     @param sum is the sum of samples subsumed by the index node.
+
+     @return sum of squares divided by sum.
+  */
+  inline double Prebias(unsigned int splitIdx, double sum, unsigned int sCount) const {
+    return sumSquares[splitIdx] / sum;
+  }
+
+
  public:
-  SPCtg(const class PMTrain *_pmTrain, const class RowRank *_rowRank, class SamplePred *_samplePred, const std::vector<class SampleNode> &_sampleCtg, unsigned int bagCount);
+  SPCtg(const class PMTrain *_pmTrain, const class RowRank *_rowRank, unsigned int bagCount, unsigned int _nCtg);
   ~SPCtg();
-  static void Immutables(unsigned int _ctgWidth);
-  static void DeImmutables();
   unsigned int Residuals(const SPNode spn[], unsigned int levelIdx, unsigned int idxStart, unsigned int idxEnd, unsigned int denseRank, bool &denseLeft, bool &denseRight, double &sumDense, unsigned int &sCountDense, std::vector<double> &ctgSumDense) const;
   void ApplyResiduals(unsigned int levelIdx, unsigned int predIdx, double &ssL, double &ssr, std::vector<double> &sumDenseCtg);
+
+  inline unsigned int CtgWidth() const {
+    return nCtg;
+  }
+
+  
   /**
      @brief Determine whether a pair of square-sums is acceptably stable
      for a gain computation.
@@ -211,7 +230,7 @@ class SPCtg : public SplitPred {
      @return Sum of index node values at level index, category.
    */
   inline double CtgSum(unsigned int levelIdx, unsigned int ctg) const {
-    return ctgSum[levelIdx * ctgWidth + ctg];
+    return ctgSum[levelIdx * nCtg + ctg];
   }
 
 
@@ -219,7 +238,7 @@ class SPCtg : public SplitPred {
      @return column of category sums at index.
    */
   inline const double *ColumnSums(unsigned int levelIdx) const {
-    return &ctgSum[levelIdx * ctgWidth];
+    return &ctgSum[levelIdx * nCtg];
   }
 
   
@@ -239,7 +258,7 @@ class SPCtg : public SplitPred {
      @return current partial sum.
   */
   inline double CtgSumAccum(unsigned int levelIdx, unsigned int numIdx, unsigned int yCtg, double ySum) {
-    int off = numIdx * levelCount * ctgWidth + levelIdx * ctgWidth + yCtg;
+    int off = numIdx * splitCount * nCtg + levelIdx * nCtg + yCtg;
     double val = ctgSumAccum[off];
     ctgSumAccum[off] = val + ySum;
 
@@ -247,12 +266,7 @@ class SPCtg : public SplitPred {
   }
 
 
-  static inline unsigned int CtgWidth() {
-    return ctgWidth;
-  }
-
-  
-  double SumSquares(unsigned int levelIdx) {
+  double SumSquares(unsigned int levelIdx) const {
     return sumSquares[levelIdx];
   }
 };
