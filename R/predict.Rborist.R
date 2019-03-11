@@ -1,4 +1,4 @@
-# Copyright (C)  2012-2017   Mark Seligman
+# Copyright (C)  2012-2018   Mark Seligman
 ##
 ## This file is part of ArboristBridgeR.
 ##
@@ -15,28 +15,30 @@
 ## You should have received a copy of the GNU General Public License
 ## along with ArboristBridgeR.  If not, see <http://www.gnu.org/licenses/>.
 
-"predict.Rborist" <- function(object, newdata, yTest=NULL, quantVec = NULL, quantiles = !is.null(quantVec), qBin = 5000, ctgCensus = "votes", ...) {
+"predict.Rborist" <- function(object, newdata, yTest=NULL, quantVec = NULL, quantiles = !is.null(quantVec), qBin = 5000, ctgCensus = "votes", oob = FALSE, nThread = 0, verbose = FALSE, ...) {
   if (!inherits(object, "Rborist"))
     stop("object not of class Rborist")
   if (is.null(object$forest))
     stop("Forest state needed for prediction")
-  if (quantiles && is.null(object$leaf))
-    stop("Leaf state needed for quantile")
+  if (is.null(object$leaf))
+    stop("Leaf state needed for prediction")
+  if (is.null(object$signature))
+    stop("Training signature missing")
+  if (nThread < 0)
+    stop("Thread count must be nonnegative")
+  
   if (quantiles && is.null(quantVec))
     quantVec <- DefaultQuantVec()
 
-  PredictForest(object$forest, object$leaf, object$signature, newdata, yTest, quantVec, qBin, ctgCensus)
+  PredictDeep(object, newdata, yTest, quantVec, qBin, ctgCensus, oob, nThread, verbose)
 }
 
 
-PredictForest <- function(forest, leaf, sigTrain, newdata, yTest, quantVec, qBin, ctgCensus) {
+PredictDeep <- function(objTrain, newdata, yTest, quantVec, qBin, ctgCensus, oob, nThread, verbose) {
+  forest <- objTrain$forest
+
   if (is.null(forest$forestNode))
     stop("Forest nodes missing")
-  if (is.null(leaf))
-    stop("Leaf missing")
-  if (is.null(sigTrain))
-    stop("Training signature missing")
-
   if (!is.null(quantVec)) {
     if (any(quantVec > 1) || any(quantVec < 0))
       stop("Quantile range must be within [0,1]")
@@ -45,17 +47,23 @@ PredictForest <- function(forest, leaf, sigTrain, newdata, yTest, quantVec, qBin
   }
 
   if (!is.null(yTest) && nrow(newdata) != length(yTest)) {
-    stop("Row counts of data and test vector must match")
+    stop("Test vector must conform with observations")
   }
+
+  if (verbose)
+      print("Beginning prediction")
   
   # Checks test data for conformity with training data.
+  sigTrain <- objTrain$signature
   predBlock <- PredBlock(newdata, sigTrain)
+
+  leaf <- objTrain$leaf
   if (inherits(leaf, "LeafReg")) {
     if (is.null(quantVec)) {
-      prediction <- tryCatch(.Call("RcppTestReg", predBlock, forest, leaf, yTest), error = function(e) {stop(e)})
+      prediction <- tryCatch(.Call("TestReg", predBlock, objTrain, yTest, oob, nThread), error = function(e) {stop(e)})
     }
     else {
-      prediction <- tryCatch(.Call("RcppTestQuant", predBlock, forest, leaf, quantVec, qBin, yTest), error = function(e) {stop(e)})
+      prediction <- tryCatch(.Call("TestQuant", predBlock, objTrain, quantVec, qBin, yTest, oob, nThread), error = function(e) {stop(e)})
     }
   }
   else if (inherits(leaf, "LeafCtg")) {
@@ -63,10 +71,10 @@ PredictForest <- function(forest, leaf, sigTrain, newdata, yTest, quantVec, qBin
       stop("Quantiles not supported for classifcation")
 
     if (ctgCensus == "votes") {
-      prediction <- tryCatch(.Call("RcppTestVotes", predBlock, forest, leaf, yTest), error = function(e) {stop(e)})
+      prediction <- tryCatch(.Call("TestVotes", predBlock, objTrain, yTest, oob, nThread), error = function(e) {stop(e)})
     }
     else if (ctgCensus == "prob") {
-      prediction <- tryCatch(.Call("RcppTestProb", predBlock, forest, leaf, yTest), error = function(e) {stop(e)})
+      prediction <- tryCatch(.Call("TestProb", predBlock, objTrain, yTest, oob, nThread), error = function(e) {stop(e)})
     }
     else {
       stop(paste("Unrecognized ctgCensus type:  ", ctgCensus))
@@ -75,6 +83,9 @@ PredictForest <- function(forest, leaf, sigTrain, newdata, yTest, quantVec, qBin
   else {
     stop("Unsupported leaf type")
   }
+
+  if (verbose)
+      print("Prediction completed")
 
   prediction
 }

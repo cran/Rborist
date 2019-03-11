@@ -20,107 +20,163 @@
 #include <vector>
 #include <algorithm>
 
-#include "param.h"
+#include "decnode.h"
+
+
+/**
+  @brief DecNode specialized for training.
+ */
+class PTNode : public DecNode {
+  FltVal info;  // Nonzero iff nonterminal.
+ public:
+  
+  void consumeNonterminal(const class FrameTrain *frameTrain,
+                          class ForestTrain *forest,
+                          vector<double> &predInfo,
+                          unsigned int idx) const;
+
+  void splitNum(const class SplitCand &cand,
+                unsigned int lhDel);
+
+  /**
+     @brief Resets to default terminal status.
+
+     @return void.
+   */
+  inline void setTerminal() {
+    lhDel = 0;
+  }
+
+
+  /**
+     @brief Resets to nonterminal with specified lh-delta.
+
+     @return void.
+   */
+  inline void setNonterminal(unsigned int lhDel) {
+    this->lhDel = lhDel;
+  }
+
+  
+  inline bool isNonTerminal() const {
+    return lhDel != 0;
+  }
+
+
+  inline unsigned int getLHId(unsigned int ptId) const {
+    return isNonTerminal() ? ptId + lhDel : 0;
+  }
+
+  inline unsigned int getRHId(unsigned int ptId) const {
+    return isNonTerminal() ? getLHId(ptId) + 1 : 0;
+  }
+
+
+  inline void SplitFac(unsigned int predIdx, unsigned int lhDel, unsigned int bitEnd, double info) {
+    this->predIdx = predIdx;
+    this->lhDel = lhDel;
+    this->splitVal.offset = bitEnd;
+    this->info = info;
+  }
+};
 
 
 /**
  @brief Serialized representation of the pre-tree, suitable for tranfer between
  devices such as coprocessors, disks and nodes.
-
- Left and right subnodes are referenced as indices into the vector
- representation of the tree. Leaves are distinguished as having two
- negative-valued subnode indices, while splits have both subset
- indices positive.  Mixed negative and non-negative subnode indices
- indicate an error.
 */
-class PTNode {
- public:
-  unsigned int lhDel;  // Delta to LH subnode. Nonzero iff non-terminal.
-  unsigned int predIdx; // Nonterminal only.
-  FltVal info; // Nonterminal only.
-  union {
-    unsigned int offset; // Bit-vector offset:  factor.
-    RankRange rankRange; // LH, RH ranks:  numeric.
-  } splitVal;
-
-  void NonterminalConsume(const class PMTrain *pmTrain, class ForestTrain *forest, unsigned int tIdx, std::vector<double> &predInfo, unsigned int idx) const;
-
-
-  inline void SetTerminal() {
-    lhDel = 0;
-  }
-
-
-  inline void SetNonterminal(unsigned int parId, unsigned int lhId) {
-    lhDel = lhId - parId;
-  }
-
-  
-  inline bool NonTerminal() const {
-    return lhDel != 0;
-  }
-
-
-  inline unsigned int LHId(unsigned int ptId) const {
-    return NonTerminal() ? ptId + lhDel : 0;
-  }
-
-  inline unsigned int RHId(unsigned int ptId) const {
-    return NonTerminal() ? LHId(ptId) + 1 : 0;
-  }
-};
-
-
 class PreTree {
-  static unsigned int heightEst;
-  static unsigned int leafMax; // User option:  maximum # leaves, if > 0.
-  const class PMTrain *pmTrain;
-  PTNode *nodeVec; // Vector of tree nodes.
-  unsigned int nodeCount; // Allocation height of node vector.
-  unsigned int height;
-  unsigned int leafCount;
-  unsigned int bitEnd; // Next free slot in factor bit vector.
-  class BV *splitBits;
-  std::vector<unsigned int> termST;
-  class BV *BitFactory();
-  void TerminalOffspring(unsigned int _parId);
-  const std::vector<unsigned int> FrontierConsume(class ForestTrain *forest, unsigned int tIdx) const ;
+  static size_t heightEst;
+  static size_t leafMax; // User option:  maximum # leaves, if > 0.
+  const class FrameTrain *frameTrain;
   const unsigned int bagCount;
+  size_t nodeCount; // Allocation height of node vector.
+  PTNode *nodeVec; // Vector of tree nodes.
+  size_t height;
+  size_t leafCount;
+  size_t bitEnd; // Next free slot in factor bit vector.
+  class BV *splitBits;
+  vector<unsigned int> termST;
+  class BV *BitFactory();
+  const vector<unsigned int> frontierConsume(class ForestTrain *forest) const;
   unsigned int BitWidth();
 
- public:
-  PreTree(const class PMTrain *_pmTrain, unsigned int _bagCount);
-  ~PreTree();
-  static void Immutables(unsigned int _nSamp, unsigned int _minH, unsigned int _leafMax);
-  static void DeImmutables();
-  static void Reserve(unsigned int height);
 
-  const std::vector<unsigned int> Consume(class ForestTrain *forest, unsigned int tIdx, std::vector<double> &predInfo);
-  void NonterminalConsume(class ForestTrain *forest, unsigned int tIdx, std::vector<double> &predInfo) const;
+  /**
+     @brief Accounts for the addition of two terminals to the tree.
+
+     @return void, with incremented height and leaf count.
+  */
+  inline void TerminalOffspring() {
+  // Two more leaves for offspring, one fewer for this.
+    height += 2;
+    leafCount++;
+  }
+
+
+ public:
+  PreTree(const class FrameTrain *_frameTrain, unsigned int _bagCount);
+  ~PreTree();
+  static void immutables(size_t _nSamp, size_t _minH, size_t _leafMax);
+  static void deImmutables();
+  static void reserve(size_t height);
+
+
+  /**
+     @brief Consumes all pretree nonterminal information into crescent forest.
+
+     @param forest grows by producing nodes and splits consumed from pre-tree.
+
+     @param tIdx is the index of the tree being consumed/produced.
+
+     @param predInfo accumulates the information contribution of each predictor.
+
+     @return leaf map from consumed frontier.
+  */
+  const vector<unsigned int> consume(class ForestTrain *forest,
+                                     unsigned int tIdx,
+                                     vector<double> &predInfo);
+
+  void consumeNonterminal(class ForestTrain *forest,
+                          vector<double> &predInfo) const;
+
   void BitConsume(unsigned int *outBits);
+
   void LHBit(int idx, unsigned int pos);
-  void NonTerminalFac(double _info, unsigned int _predIdx, unsigned int _id);
-  void NonTerminalNum(double _info, unsigned int _predIdx, RankRange _rankRange, unsigned int _id);
-  void Level(unsigned int splitNext, unsigned int leafNext);
+
+  void branchFac(const class SplitCand& argMax,
+                 unsigned int _id);
+
+  /**
+     @brief Finalizes numeric-valued nonterminal.
+
+     @param argMax is the split candidate characterizing the branch.
+
+     @param id is the node index.
+  */
+  void branchNum(const class SplitCand &argMax,
+                 unsigned int id);
+
+  void levelStorage(unsigned int splitNext, unsigned int leafNext);
   void ReNodes();
-  void SubtreeFrontier(const std::vector<unsigned int> &stTerm);
+  void subtreeFrontier(const vector<unsigned int> &stTerm);
   unsigned int LeafMerge();
   
-  inline unsigned int LHId(unsigned int ptId) const {
-    return nodeVec[ptId].LHId(ptId);
+  inline unsigned int getLHId(unsigned int ptId) const {
+    return nodeVec[ptId].getLHId(ptId);
   }
 
   
-  inline unsigned int RHId(unsigned int ptId) const {
-    return nodeVec[ptId].RHId(ptId);
+  inline unsigned int getRHId(unsigned int ptId) const {
+    return nodeVec[ptId].getRHId(ptId);
   }
 
   
   /**
      @return true iff node is nonterminal.
    */
-  inline bool NonTerminal(unsigned int ptId) const {
-    return nodeVec[ptId].NonTerminal();
+  inline bool isNonTerminal(unsigned int ptId) const {
+    return nodeVec[ptId].isNonTerminal();
   }
 
 
@@ -132,8 +188,8 @@ class PreTree {
 
        @return true iff node has two leaf children.
     */
-  inline bool Mergeable(unsigned int ptId) const {
-    return !NonTerminal(LHId(ptId)) && !NonTerminal(RHId(ptId));
+  inline bool isMergeable(unsigned int ptId) const {
+    return !isNonTerminal(getLHId(ptId)) && !isNonTerminal(getRHId(ptId));
   }  
 
   
@@ -143,9 +199,13 @@ class PreTree {
 
      @return void.
    */
-  inline void BlockBump(unsigned int &_height, unsigned int &_maxHeight, unsigned int &_bitWidth, unsigned int &_leafCount, unsigned int &_bagCount) {
+  inline void blockBump(size_t &_height,
+                        size_t &_maxHeight,
+                        size_t &_bitWidth,
+                        size_t &_leafCount,
+                        size_t &_bagCount) {
     _height += height;
-    _maxHeight = std::max(height, _maxHeight);
+    _maxHeight = max(height, _maxHeight);
     _bitWidth += BitWidth();
     _leafCount += leafCount;
     _bagCount += bagCount;

@@ -8,436 +8,627 @@
 /**
    @file leaf.cc
 
-   @brief Methods to train leaf components for an entire forest.
+   @brief Methods to train and score leaf components for an entire forest.
 
    @author Mark Seligman
  */
 
 #include "leaf.h"
-#include "predblock.h"
 #include "sample.h"
 #include "bv.h"
+#include "ompthread.h"
 
 #include <algorithm>
 
-//#include <iostream>
-//using namespace std;
 
-bool Leaf::thinLeaves = false;
-
-void Leaf::Immutables(bool _thinLeaves) {
-  thinLeaves = _thinLeaves;
+LeafFrameReg::LeafFrameReg(const unsigned int height[],
+                 unsigned int nTree_,
+                 const Leaf leaf[],
+                 const unsigned int bagHeight[],
+                 const class BagSample bagSample[],
+                 const double *yTrain_,
+                 double meanTrain_,
+                 unsigned int rowPredict) :
+  LeafFrame(height, nTree_, leaf, bagHeight, bagSample),
+  yTrain(yTrain_),
+  meanTrain(meanTrain_),
+  offset(leafBlock->setOffsets()), // leafCount
+  defaultScore(MeanTrain()),
+  yPred(vector<double>(rowPredict)) {
 }
 
 
-void Leaf::DeImmutables() {
-  thinLeaves = false;
+LeafFrameCtg::LeafFrameCtg(const unsigned int leafHeight[],
+                 unsigned int nTree,
+                 const class Leaf leaf[],
+                 const unsigned int bagHeight[],
+                 const class BagSample bagSample[],
+                 const double ctgProb_[],
+                 unsigned int ctgTrain_,
+                 unsigned int rowPredict,
+                 bool doProb) :
+  LeafFrame(leafHeight,
+       nTree,
+       leaf,
+       bagHeight,
+       bagSample),
+  ctgTrain(ctgTrain_),
+  ctgProb(make_unique<CtgProb>(ctgTrain, nTree, leafHeight, ctgProb_)),
+  yPred(vector<unsigned int>(rowPredict)),
+  // Can only predict trained categories, so census and
+  // probability matrices have 'ctgTrain' columns.
+  ctgDefault(ctgProb->ctgDefault()),
+  votes(vector<double>(rowPredict * ctgTrain)),
+  census(vector<unsigned int>(rowPredict * ctgTrain)),
+  prob(vector<double>(doProb ? rowPredict * ctgTrain : 0)) {
+  fill(votes.begin(), votes.end(), 0.0);
 }
 
 
-/**
-   @breif Training constructor.
- */
-Leaf::Leaf(std::vector<unsigned int> &_origin, std::vector<LeafNode> &_leafNode, std::vector<BagLeaf> &_bagLeaf, std::vector<unsigned int> &_bagBits, unsigned int rowTrain) : origin(_origin), nTree(origin.size()), leafNode(_leafNode), bagLeaf(_bagLeaf), bagRow(new BitMatrix(_bagBits, rowTrain, nTree)) {
+CtgProb::CtgProb(unsigned int ctgTrain,
+                 unsigned int nTree,
+                 const unsigned int* leafHeight,
+                 const double* prob) :
+  nCtg(ctgTrain),
+  probDefault(vector<double>(nCtg)),
+  ctgHeight(scaleHeight(leafHeight, nTree)),
+  raw(make_unique<Jagged3<const double*, const unsigned int*> >(nCtg, nTree, &ctgHeight[0], prob)) {
+  setDefault();
 }
 
 
-Leaf::~Leaf() {
-  delete bagRow;
+vector<unsigned int> CtgProb::scaleHeight(const unsigned int* leafHeight,
+                                          unsigned int nTree) const {
+  vector<unsigned int> height(nTree);
+
+  unsigned int i = 0;
+  for (auto & ht : height) {
+    ht = nCtg * leafHeight[i++];
+  }
+
+  return move(height);
 }
 
 
-/**
- */
-LeafReg::LeafReg(std::vector<unsigned int> &_origin, std::vector<LeafNode> &_leafNode, std::vector<BagLeaf> &_bagLeaf, std::vector<unsigned int> &_bagBits, unsigned int rowTrain) : Leaf(_origin, _leafNode, _bagLeaf, _bagBits, rowTrain) {
+LeafFrame::LeafFrame(const unsigned int* leafHeight,
+           unsigned int nTree_,
+           const Leaf* leaf,
+           const unsigned int* bagHeight,
+           const BagSample *bagSample) :
+  nTree(nTree_),
+  leafBlock(make_unique<LeafBlock>(nTree, leafHeight, leaf)),
+  blBlock(make_unique<BLBlock>(nTree, bagHeight, bagSample)),
+  noLeaf(leafBlock->size()) { // Greater than all absolute indices.
 }
 
 
-LeafReg::~LeafReg() {
+LeafBlock::LeafBlock(unsigned int nTree,
+                     const unsigned int* height,
+                     const Leaf* leaf) :
+  raw(make_unique<JaggedArray<const Leaf*, const unsigned int*> >(nTree, height, leaf)), noLeaf(raw->size()) {
 }
 
 
-/**
-   @brief Reserves leafNode space based on estimate.
+BLBlock::BLBlock(unsigned int nTree,
+                 const unsigned int* height,
+                 const BagSample* bagSample) :
+  raw(make_unique<JaggedArray<const BagSample*, const unsigned int*> >(nTree, height, bagSample)) {
+}
+                     
 
-   @return void.
- */
-void Leaf::Reserve(unsigned int leafEst, unsigned int bagEst) {
-  leafNode.reserve(leafEst);
-  bagLeaf.reserve(bagEst);
+
+LeafFrame::~LeafFrame() {
 }
 
 
-/**
-   @brief Reserves space based on leaf- and bag-count estimates.
+vector<size_t> LeafBlock::setOffsets() const {
+  vector<size_t> offset(raw->size());
+  unsigned int countAccum = 0;
+  unsigned int idx = 0;
+  for (auto & off : offset) {
+    off = countAccum;
+    countAccum += getExtent(idx++);
+  }
 
-   @return void.
- */
-void LeafReg::Reserve(unsigned int leafEst, unsigned int bagEst) {
-  Leaf::Reserve(leafEst, bagEst);
+  return move(offset);
+  // Post-condition:  countAccum == total bag size.
 }
 
 
-/**
- */
-void LeafCtg::Reserve(unsigned int leafEst, unsigned int bagEst) {
-  Leaf::Reserve(leafEst, bagEst);
-  weight.reserve(leafEst * ctgWidth);
+void LeafFrame::dump(const BitMatrix* baggedRows,
+                     vector< vector<unsigned int> > &rowTree,
+                     vector< vector<unsigned int> > &sCountTree,
+                     vector<vector<double> >& scoreTree,
+                     vector<vector<unsigned int> >& extentTree) const {
+  blBlock->dump(baggedRows, rowTree, sCountTree);
+  leafBlock->dump(scoreTree, extentTree);
 }
 
 
-/**
-   @brief Constructor for crescent forest.
- */
-LeafCtg::LeafCtg(std::vector<unsigned int> &_origin, std::vector<LeafNode> &_leafNode, std::vector<BagLeaf> &_bagLeaf, std::vector<unsigned int>  &_bagBits, unsigned int rowTrain, std::vector<double> &_weight, unsigned int _ctgWidth) : Leaf(_origin, _leafNode, _bagLeaf, _bagBits, rowTrain), weight(_weight), ctgWidth(_ctgWidth) {
-}
-
-
-LeafCtg::~LeafCtg() {
-}
-
-
-/**
-   @brief Derives and copies regression leaf information.
-
-   @param leafExtent gives leaf width at forest index.
-
-   @return bag count, with output parameter vectors.
- */
-void LeafReg::Leaves(const PMTrain *pmTrain, const Sample *sample, const std::vector<unsigned int> &leafMap, unsigned int tIdx) {
-  unsigned int leafCount = 1 + *std::max_element(leafMap.begin(), leafMap.end());
-  NodeExtent(sample, leafMap, leafCount, tIdx);
-  BagTree(sample, leafMap, tIdx);
-  Scores(sample, leafMap, leafCount, tIdx);
-}
-
-
-/**
-   @brief Records row, multiplicity and leaf index for bagged samples
-   within a tree.
-   For this scheme to work, samples indices must reference consecutive 
-   bagged rows, as they currently do.
-
-   @param leafMap maps sample indices to leaves.
-
-   @param tIdx is the index of the current tree.
-
-   @return void.
-*/
-void Leaf::BagTree(const Sample *sample, const std::vector<unsigned int> &leafMap, unsigned int tIdx) {
-  std::vector<unsigned int> sample2Row(sample->BagCount());
-  sample->RowInvert(sample2Row);
-  unsigned int sIdx = 0;
-  for (auto row : sample2Row) {
-    bagRow->SetBit(row, tIdx);
-    if (!thinLeaves) {
-      BagLeaf lb;
-      lb.Init(leafMap[sIdx], sample->SCount(sIdx));
-      sIdx++;
-      bagLeaf.push_back(lb);
+void LeafBlock::dump(vector<vector<double> >& score,
+                     vector<vector<unsigned int> >& extent) const {
+  size_t idx = 0;
+  for (auto tIdx = 0ul; tIdx < raw->getNMajor(); tIdx++) {
+    for (; idx < raw->height[tIdx]; idx++) {
+      score[tIdx].push_back(getScore(idx));
+      extent[tIdx].push_back(getExtent(idx));
     }
   }
 }
 
 
+void BLBlock::dump(const BitMatrix* baggedRows,
+                   vector<vector<unsigned int> >& rowTree,
+                   vector<vector<unsigned int> >& sCountTree) const {
+  size_t bagIdx = 0;
+  for (auto tIdx = 0ul; tIdx < raw->getNMajor(); tIdx++) {
+    for (auto row = 0ul; row < baggedRows->getStride(); row++) {
+      if (baggedRows->testBit(tIdx, row)) {
+        rowTree[tIdx].emplace_back(row);
+        sCountTree[tIdx].emplace_back(getSCount(bagIdx++));
+      }
+    }
+  }
+}
+                                                            
+
+void LeafFrameReg::scoreBlock(const unsigned int* predictLeaves,
+                              unsigned int rowStart,
+                              unsigned int rowEnd) {
+  OMPBound blockRow;
+  OMPBound blockSup = (OMPBound) (rowEnd - rowStart);
+
+#pragma omp parallel default(shared) private(blockRow) num_threads(OmpThread::nThread)
+  {
+#pragma omp for schedule(dynamic, 1)
+  for (blockRow = 0; blockRow < blockSup; blockRow++) {
+    leafBlock->scoreAcross(&predictLeaves[nTree * blockRow], defaultScore, &yPred[rowStart + blockRow]);
+  }
+  }
+}
+
+void LeafBlock::scoreAcross(const unsigned int* predictLeaves, double defaultScore, double* yPred) const {
+  double score = 0.0;
+  unsigned int treesSeen = 0;
+  for (unsigned int tIdx = 0; tIdx < nTree(); tIdx++) {
+    unsigned int termIdx = predictLeaves[tIdx];
+    if (termIdx != noLeaf) {
+      treesSeen++;
+      score += getScore(tIdx, termIdx);
+    }
+  }
+  *yPred = treesSeen > 0 ? score / treesSeen : defaultScore;
+}
+
+
+// Scores each row independently, in parallel.
+void LeafFrameCtg::scoreBlock(const unsigned int* predictLeaves,
+                              unsigned int rowStart,
+                              unsigned int rowEnd) {
+  OMPBound blockRow;
+  OMPBound blockSup = (OMPBound) (rowEnd - rowStart);
+// TODO:  Recast loop by blocks, to avoid
+// false sharing.
+#pragma omp parallel default(shared) private(blockRow) num_threads(OmpThread::nThread)
+  {
+#pragma omp for schedule(dynamic, 1)
+  for (blockRow = 0; blockRow < blockSup; blockRow++) {
+    leafBlock->scoreAcross(&predictLeaves[nTree * blockRow], ctgDefault, &votes[ctgIdx(rowStart + blockRow, 0)]);
+    if (!prob.empty()) {
+      ctgProb->probAcross(&predictLeaves[nTree * blockRow], &prob[ctgIdx(rowStart + blockRow, 0)], noLeaf);
+    }
+  }
+  }
+}
+
+
+void LeafBlock::scoreAcross(const unsigned int predictLeaves[],
+                          unsigned int ctgDefault,
+                          double yCtg[]) const {
+  unsigned int treesSeen = 0;
+  for (unsigned int tIdx = 0; tIdx < nTree(); tIdx++) {
+    unsigned int termIdx = predictLeaves[tIdx];
+    if (termIdx != noLeaf) {
+      treesSeen++;
+      double val = getScore(tIdx, termIdx);
+      unsigned int ctg = floor(val); // Truncates jittered score for indexing.
+      yCtg[ctg] += (1.0 + val) - ctg; // 1 plus small jitter.
+    }
+  }
+  if (treesSeen == 0) {
+    yCtg[ctgDefault] = 1.0; // Other slots all zero.
+  }
+}
+
+
+void CtgProb::addLeaf(double* probRow,
+                      unsigned int tIdx,
+                      unsigned int leafIdx) const {
+  auto idxBase = raw->minorOffset(tIdx, leafIdx);
+  for (auto ctg = 0ul; ctg < nCtg; ctg++) {
+    probRow[ctg] += raw->getItem(idxBase + ctg);
+  }
+}
+
+
+void CtgProb::probAcross(const unsigned int* predictRow,
+                         double* probRow,
+                         unsigned int noLeaf) const {
+  unsigned int treesSeen = 0;
+  for (auto tc = 0ul; tc < raw->getNMajor(); tc++) {
+    unsigned int termIdx = predictRow[tc];
+    if (termIdx != noLeaf) {
+      treesSeen++;
+      addLeaf(probRow, tc, termIdx);
+    }
+  }
+  if (treesSeen == 0) {
+    applyDefault(probRow);
+  }
+  else {
+    double scale = 1.0 / treesSeen;
+    for (auto ctg = 0ul; ctg < nCtg; ctg++)
+      probRow[ctg] *= scale;
+  }
+}
+
+
 /**
-   @brief Derives scores for regression tree:  intialize, accumulate, divide.
+   @brief Voting for non-bagged prediction.  Rounds jittered scores to category.
 
-   @param leafMap maps sample id to leaf index.
-
-   @param leafCount is the number of leaves in the tree.
-
-   @return void, with output parameter vector.
+   @return void, with side-effected census.
 */
-void LeafReg::Scores(const Sample *sample, const std::vector<unsigned int> &leafMap, unsigned int leafCount, unsigned int tIdx) {
-  std::vector<unsigned int> sCount(leafCount); // Per-leaf sample counts.
-  std::fill(sCount.begin(), sCount.end(), 0);
-  for (unsigned int sIdx = 0; sIdx < sample->BagCount(); sIdx++) {
-    unsigned int leafIdx = leafMap[sIdx];
-    ScoreAccum(tIdx, leafIdx, sample->Sum(sIdx));
-    sCount[leafIdx] += sample->SCount(sIdx);
-  }
+void LeafFrameCtg::vote() {
+  OMPBound rowSup = yPred.size();
+  OMPBound row;
 
-  for (unsigned int leafIdx = 0; leafIdx < leafCount; leafIdx++) {
-    ScoreScale(tIdx, leafIdx, sCount[leafIdx]);
-  }
-}
-
-
-/**
-   @brief Writes the current tree origin and computes the extent of each leaf node.
-
-   @param leafCount is the number of leaves in the current tree.
-
-   @void, with count-adjusted leaf nodes.
- */
-void Leaf::NodeExtent(const Sample *sample, std::vector<unsigned int> leafMap, unsigned int leafCount, unsigned int tIdx) {
-  unsigned int leafBase = leafNode.size();
-  origin[tIdx] = leafBase;
-
-  LeafNode init;
-  init.Init();
-  leafNode.insert(leafNode.end(), leafCount, init);
-  for (unsigned int sIdx = 0; sIdx < sample->BagCount(); sIdx++) {
-    unsigned int leafIdx = leafMap[sIdx];
-    leafNode[leafBase + leafIdx].Count()++;
-  }
-}
-
-
-/**
-   @brief Computes leaf weights and scores for a classification tree.
-
-   @return void, with side-effected weights and forest terminals.
- */
-void LeafCtg::Leaves(const PMTrain *pmTrain, const Sample *sample, const std::vector<unsigned int> &leafMap, unsigned int tIdx) {
-  unsigned int leafCount = 1 + *std::max_element(leafMap.begin(), leafMap.end());
-  NodeExtent(sample, leafMap, leafCount, tIdx);
-  BagTree(sample, leafMap, tIdx);
-  Scores(pmTrain, (SampleCtg*) sample, leafMap, leafCount, tIdx);
-}
-
-
-/**
-   @brief Weights and scores the leaves for a classification tree.
-
-   @param sampleCtg is the sampling vector for the current tree.
-   
-   @param leafMap maps sample indices to leaf indices.
-
-   @param treeOrigin is the base leaf index of the current tree.
-
-   @return void, with side-effected weight vector.
- */
-void LeafCtg::Scores(const PMTrain *pmTrain, const SampleCtg *sample, const std::vector<unsigned int> &leafMap, unsigned int leafCount, unsigned int tIdx) {
-  WeightInit(leafCount);
-
-  std::vector<double> leafSum(leafCount);
-  std::fill(leafSum.begin(), leafSum.end(), 0.0);
-  for (unsigned int sIdx = 0; sIdx < sample->BagCount(); sIdx++) {
-    unsigned int leafIdx = leafMap[sIdx];
-    FltVal sum;
-    unsigned int dummy;
-    unsigned int ctg = sample->Ref(sIdx, sum, dummy);
-    leafSum[leafIdx] += sum;
-    WeightAccum(tIdx, leafIdx, ctg, sum);
-  }
-
-  // Scales weights by leaf for probabilities.
-  for (unsigned int leafIdx = 0; leafIdx < leafCount; leafIdx++) {
-    double maxWeight = 0.0;
-    unsigned int argMax = 0;
-    double recipSum = 1.0 / leafSum[leafIdx];
-    for (unsigned int ctg = 0; ctg < ctgWidth; ctg++) {
-      double thisWeight = WeightScale(tIdx, leafIdx, ctg, recipSum);
-      if (thisWeight > maxWeight) {
-	maxWeight = thisWeight;
+#pragma omp parallel default(shared) private(row) num_threads(OmpThread::nThread)
+  {
+#pragma omp for schedule(dynamic, 1)
+  for (row = 0; row < rowSup; row++) {
+    unsigned int argMax = ctgTrain;
+    double scoreMax = 0.0;
+    double *scoreRow = &votes[ctgIdx(row,0)];
+    for (unsigned int ctg = 0; ctg < ctgTrain; ctg++) {
+      double ctgScore = scoreRow[ctg]; // Jittered vote count.
+      if (ctgScore > scoreMax) {
+        scoreMax = ctgScore;
         argMax = ctg;
       }
+      census[ctgIdx(row, ctg)] = ctgScore; // De-jittered.
     }
-    ScoreSet(tIdx, leafIdx, argMax + maxWeight / (pmTrain->NRow() * NTree()));
+    yPred[row] = argMax;
+  }
   }
 }
 
 
-/**
-   @brief Static entry for recomputing tree bag count.
+void LeafFrameCtg::dump(const BitMatrix *baggedRows,
+                        vector<vector<unsigned int> > &rowTree,
+                        vector<vector<unsigned int> > &sCountTree,
+                        vector<vector<double> > &scoreTree,
+                        vector<vector<unsigned int> > &extentTree,
+                        vector<vector<double> > &probTree) const {
+  LeafFrame::dump(baggedRows, rowTree, sCountTree, scoreTree, extentTree);
+  ctgProb->dump(probTree);
+}
 
-   @param _origin is the index of offsets into the node vector.
 
-   @param _leafNode is the forest-wide leaf set.
-
-   @param tIdx is the index of a tree.
-
-   @return bag count of tree indexed by 'tIdx'.
- */
-unsigned int Leaf::BagCount(const std::vector<unsigned int> &_origin, const LeafNode _leafNode[], unsigned int tIdx, unsigned int _leafCount) {
-  unsigned int leafFirst = _origin[tIdx];
-  unsigned int leafSup = tIdx < _origin.size() - 1 ? _origin[tIdx + 1] : _leafCount;
-  unsigned int bagCount = 0;
-  for (unsigned int leafIdx = leafFirst; leafIdx < leafSup; leafIdx++) {
-    bagCount += _leafNode[leafIdx].Extent();
+void CtgProb::dump(vector<vector<double> >& probTree) const {
+  size_t off = 0;
+  for (auto tIdx = 0ul; tIdx < raw->getNMajor(); tIdx++) {
+    for (unsigned int leafIdx = 0; leafIdx < nCtg * raw->height[tIdx]; leafIdx++) {
+      probTree[tIdx].push_back(raw->getItem(off++));
+    }
   }
+}
+
+
+void CtgProb::setDefault() {
+  fill(probDefault.begin(), probDefault.end(), 0.0);
+
+  // Fastest-changing dimension is category.
+  for (size_t idx = 0; idx < raw->size(); idx++) {
+    probDefault[idx % nCtg] += raw->getItem(idx);
+  }
+
+  // Scales by recip leaf count.
+  double scale = 1.0 / (raw->size() / nCtg);
+  for (auto ctg = 0ul; ctg < nCtg; ctg++) {
+    probDefault[ctg] *= scale;
+  }
+}
+
+
+unsigned int CtgProb::ctgDefault() const {
+  unsigned int argMax = 0;
+  double probMax = 0.0;
+  for (auto ctg = 0ul; ctg < nCtg; ctg++) {
+    if (probDefault[ctg] > probMax) {
+      probMax = probDefault[ctg];
+      argMax = ctg;
+    }
+  }
+
+  return argMax;  
+}
+
+
+void CtgProb::applyDefault(double *probPredict) const {
+  for (auto ctg = 0ul; ctg < nCtg; ctg++) {
+    probPredict[ctg] = probDefault[ctg];
+  }
+}
+
+/**
+   @brief Crescent constructor.
+ */
+LFTrain::LFTrain(const double* y_, unsigned int treeChunk) :
+  y(y_),
+  lbCresc(make_unique<LBCresc>(treeChunk)),
+  bbCresc(make_unique<BBCresc>(treeChunk)) {
+}
+
+
+LBCresc::LBCresc(unsigned int nTree) :
+  leaf(vector<Leaf>(0)),
+  height(vector<size_t>(nTree)),
+  treeFloor(0) {
+}
+
+
+BBCresc::BBCresc(unsigned int nTree) :
+  bagSample(vector<BagSample>(0)),
+  height(vector<size_t>(nTree)) {
+}
+
+
+LFTrain::~LFTrain() {
+}
+
+
+LFTrainReg::LFTrainReg(const double* y,
+                       unsigned int treeChunk) :
+  LFTrain(y, treeChunk) {
+}
+
+
+
+LFTrainReg::~LFTrainReg() {
+}
+
+
+ProbCresc::ProbCresc(unsigned int treeChunk,
+                     unsigned int nCtg_,
+                     double forestScale_) :
+  nCtg(nCtg_),
+  treeFloor(0),
+  height(vector<size_t>(treeChunk)),
+  prob(vector<double>(0)),
+  forestScale(forestScale_) {
+}
+
+
+LFTrainCtg::LFTrainCtg(const unsigned int* yCtg_,
+                       const double* proxy,
+                       unsigned int treeChunk,
+                       unsigned int nCtg_,
+                       double scale) :
+  LFTrain(proxy, treeChunk),
+  yCtg(yCtg_),
+  probCresc(make_unique<ProbCresc>(treeChunk, nCtg_, scale)),
+  nCtg(nCtg_) {
+}
+
+
+LFTrainCtg::~LFTrainCtg() {
+}
+
+
+unique_ptr<LFTrainCtg> LFTrain::factoryCtg(const unsigned int* feResponse,
+                                           const double* feProxy,
+                                           unsigned int treeChunk,
+                                           unsigned int nRow,
+                                           unsigned int nCtg,
+                                           unsigned int nTree) {
+  return make_unique<LFTrainCtg>(feResponse, feProxy, treeChunk, nCtg, 1.0 / (static_cast<double>(nTree) * nRow));
+}
+
+unique_ptr<LFTrainReg> LFTrain::factoryReg(const double* feResponse,
+                                           unsigned int treeChunk) {
+  return make_unique<LFTrainReg>(feResponse, treeChunk);
+}
+
+
+void LFTrain::blockLeaves(const Sample* sample,
+                          const vector<unsigned int>& leafMap,
+                          unsigned int tIdx) {
+  treeInit(sample, leafMap, tIdx); // virtual
+  lbCresc->setExtents(leafMap);
+  setScores(sample, leafMap); // virtual
+  bbCresc->bagLeaves(sample, leafMap);
+}
+
+
+void LFTrain::treeInit(const Sample* sample,
+                       const vector<unsigned int>& leafMap,
+                       unsigned int tIdx) {
+  lbCresc->treeInit(leafMap, tIdx);
+  bbCresc->treeInit(sample, tIdx);
+}
+
+
+void LFTrainCtg::treeInit(const Sample* sample,
+                            const vector<unsigned int>& leafMap,
+                            unsigned int tIdx) {
+  LFTrain::treeInit(sample, leafMap, tIdx);
+  probCresc->treeInit(lbCresc->getLeafCount(), tIdx);
+}
   
-  return bagCount;
+
+
+void LBCresc::treeInit(const vector<unsigned int> &leafMap,
+                                 unsigned int tIdx) {
+  leafCount = 1 + *max_element(leafMap.begin(), leafMap.end());
+  treeFloor = leaf.size();
+  height[tIdx] = treeFloor + leafCount;
+  Leaf init;
+  init.init();
+  leaf.insert(leaf.end(), leafCount, init);
 }
 
 
-/**
- */
-LeafPerfReg::LeafPerfReg(const unsigned int _origin[], unsigned int _nTree, const LeafNode _leafNode[], unsigned int _leafCount, const class BagLeaf _bagLeaf[], unsigned int _bagLeafTot, unsigned int _bagBits[], unsigned int _trainRow) : LeafPerf(_origin, _nTree, _leafNode, _leafCount, _bagLeaf, _bagLeafTot, _bagBits, _trainRow), offset(std::vector<unsigned int>(leafCount)) {
-  Offsets();
+void LBCresc::setExtents(const vector<unsigned int> &leafMap) {
+  for (auto leafIdx : leafMap) {
+    leaf[treeFloor + leafIdx].incrExtent();
+  }
+}
+
+void BBCresc::treeInit(const Sample* sample,
+                       unsigned int tIdx) {
+  height[tIdx] = bagSample.size() + sample->getBagCount();
 }
 
 
-/**
-   @brief Constructor for trained forest:  vector lengths final.
- */
-LeafPerfCtg::LeafPerfCtg(const unsigned int _origin[], unsigned int _nTree, const class LeafNode _leafNode[], unsigned int _leafCount, const class BagLeaf _bagLeaf[], unsigned int _bagLeafTot, unsigned int _bagBits[], unsigned int _trainRow, const double _weight[], unsigned int _ctgWidth) :  LeafPerf(_origin, _nTree, _leafNode, _leafCount, _bagLeaf, _bagLeafTot, _bagBits, _trainRow), weight(_weight), ctgWidth(_ctgWidth) {
+void BBCresc::bagLeaves(const Sample *sample, const vector<unsigned int> &leafMap) {
+  unsigned int sIdx = 0;
+  for (auto leafIdx : leafMap) {
+    bagSample.emplace_back(BagSample(leafIdx, sample->getSCount(sIdx++)));
+  }
 }
 
 
-/**
-   @brief Prediction constructor.
- */
-LeafPerf::LeafPerf(const unsigned int *_origin, unsigned int _nTree, const LeafNode *_leafNode, unsigned int _leafCount, const BagLeaf *_bagLeaf, unsigned int _bagTot, unsigned int _bagBits[], unsigned int _trainRow) : origin(_origin), leafNode(_leafNode), bagLeaf(_bagLeaf), baggedRows(_bagBits == 0 ? new BitMatrix(0, 0) : new BitMatrix(_bagBits, _trainRow, _nTree)), nTree(_nTree), leafCount(_leafCount), bagLeafTot(_bagTot) {
+void LFTrainReg::setScores(const Sample* sample, const vector<unsigned int>& leafMap) {
+  lbCresc->setScoresReg(sample, leafMap);
 }
 
 
-LeafPerf::~LeafPerf() {
-  delete baggedRows;
+shared_ptr<Sample> LFTrainReg::rootSample(const RowRank* rowRank,
+                                          BitMatrix* bag,
+                                          unsigned int tIdx) const {
+  return Sample::factoryReg(y, rowRank, bag->BVRow(tIdx).get());
 }
 
 
-/**
-   @brief Accumulates exclusive sum of counts for offset lookup.  Only
-   client is quantile regression:  exits of bagLeaf[] empty.
 
-   @return void, with side-effected reference vector.
- */
-void LeafPerfReg::Offsets() {
-  if (bagLeafTot == 0)
-    return;
-  unsigned int countAccum = 0;
+void LBCresc::setScoresReg(const Sample* sample,
+                           const vector<unsigned int>& leafMap) {
+  vector<unsigned int> sCount(leafCount); // Per-leaf sample counts.
+  fill(sCount.begin(), sCount.end(), 0);
+
+  unsigned int sIdx = 0;
+  for (auto leafIdx : leafMap) {
+    scoreAccum(leafIdx, sample->getSum(sIdx));
+    sCount[leafIdx] += sample->getSCount(sIdx);
+    sIdx++;
+  }
+
+  auto leafIdx = 0ul;
+  for (auto sc : sCount) {
+    scoreScale(leafIdx++, 1.0 / sc);
+  }
+}
+
+void LFTrainCtg::setScores(const Sample* sample,
+                             const vector<unsigned int>& leafMap) {
+  probCresc->probabilities(sample, leafMap, lbCresc->getLeafCount());
+  lbCresc->setScoresCtg(probCresc.get());
+}
+
+
+shared_ptr<Sample> LFTrainCtg::rootSample(const RowRank* rowRank,
+                                          BitMatrix* bag,
+                                          unsigned int tIdx) const {
+  return Sample::factoryCtg(y, rowRank, &yCtg[0], bag->BVRow(tIdx).get());
+}
+
+
+void LBCresc::setScoresCtg(const ProbCresc* probCresc) {
   for (unsigned int leafIdx = 0; leafIdx < leafCount; leafIdx++) {
-    offset[leafIdx] = countAccum;
-    countAccum += Extent(leafIdx);
+    setScore(leafIdx, probCresc->leafScore(leafIdx));
   }
-  // Post-condition:  countAccum == bagTot
 }
 
 
-/**
-   @brief Assigns a forest-wide default weighting value to each category.
+void ProbCresc::probabilities(const Sample* sample,
+                              const vector<unsigned int>& leafMap,
+                              unsigned int leafCount) {
+  vector<double> leafSum(leafCount);
+  fill(leafSum.begin(), leafSum.end(), 0.0);
 
-   @return void, with output reference parameter.
- */
-void LeafPerfCtg::DefaultWeight(std::vector<double> &defaultWeight) const {
-  unsigned int idx = 0;
-  for (unsigned int forestIdx = 0; forestIdx < leafCount; forestIdx++) {
-    for (unsigned int ctg = 0; ctg < ctgWidth; ctg++) {
-      defaultWeight[ctg] += weight[idx++];
+  // Accumulates sample sums by leaf.
+  unsigned int sIdx = 0;
+  for (auto leafIdx : leafMap) {
+    sample->accum(sIdx++, leafSum[leafIdx], &prob[treeFloor + leafIdx*nCtg]);
+  }
+
+  unsigned int leafIdx = 0;
+  for (auto sum : leafSum) {
+    normalize(leafIdx++, sum);
+  }
+}
+
+void ProbCresc::normalize(unsigned int leafIdx, double sum) {
+  double recipSum = 1.0 / sum;
+  for (auto ctg = 0ul; ctg < nCtg; ctg++) {
+    prob[treeFloor + leafIdx*nCtg + ctg] *= recipSum;
+  }
+}
+
+
+void ProbCresc::treeInit(unsigned int leafCount, unsigned int tIdx) {
+  treeFloor = prob.size();
+  height[tIdx] = treeFloor + leafCount * nCtg;
+  prob.insert(prob.end(), nCtg * leafCount, 0.0);
+}
+
+
+double ProbCresc::leafScore(unsigned int leafIdx) const {
+  double probMax = 0;
+  unsigned int argMax = 0;
+  for (auto ctg = 0ul; ctg < nCtg; ctg++) {
+    double ctgProb = prob[treeFloor + leafIdx * nCtg + ctg];
+    if (ctgProb > probMax) {
+      probMax = ctgProb;
+      argMax = ctg;
     }
   }
-  for (unsigned int ctg = 0; ctg < ctgWidth; ctg++) {
-    defaultWeight[ctg] /= leafCount;
+  // Integer component of score is argMax.
+  // Fractional part is scaled probability value.
+  return argMax + forestScale * probMax;
+}
+
+
+void ProbCresc::dump(double *probOut) const {
+  for (size_t i = 0; i < prob.size(); i++) {
+    probOut[i] = prob[i];
   }
 }
 
 
-/**
-   @brief Computes the count and rank of every bagged sample in the forest.
-   Quantile regression is the only client.
 
-   @return void.
- */
-void LeafPerfReg::RankCounts(const std::vector<unsigned int> &row2Rank, std::vector<RankCount> &rankCount) const {
-  if (rankCount.size() == 0)
-    return;
-
-  std::vector<unsigned int> leafSeen(leafCount);
-  std::fill(leafSeen.begin(), leafSeen.end(), 0);
-
-  unsigned int bagIdx = 0;
-  for (unsigned int tIdx = 0; tIdx < nTree; tIdx++) {
-    for (unsigned int row = 0; row < baggedRows->NRow(); row++) {
-      if (baggedRows->TestBit(row, tIdx)) {
-        unsigned int leafIdx = LeafIdx(tIdx, bagIdx);
-        unsigned int bagOff = offset[leafIdx] + leafSeen[leafIdx]++;
-	rankCount[bagOff].Init(row2Rank[row], SCount(bagOff));
-	bagIdx++;
-      }
-    }
-  }
+void LFTrain::cacheNodeRaw(unsigned char leafRaw[]) const {
+  lbCresc->dumpRaw(leafRaw);
 }
 
 
-/**
- */
-void LeafReg::Export(const std::vector<unsigned int> &_origin, const LeafNode _leafNode[], unsigned int _leafCount, const BagLeaf _bagLeaf[], unsigned int _bagBits[], unsigned int _trainRow, std::vector<std::vector<unsigned int> > &rowTree, std::vector<std::vector<unsigned int> > &sCountTree, std::vector<std::vector<double> > &scoreTree, std::vector<std::vector<unsigned int> >&extentTree) {
-  Leaf::Export(_origin, _leafNode, _leafCount, _bagLeaf, _bagBits, _trainRow, rowTree, sCountTree);
-  LeafNode::Export(_origin, _leafNode, _leafCount, scoreTree, extentTree);
-}
-
-
-/**
-   @brief Static exporter of BagLeaf vector into per-tree vector of vectors.
-
-   @return void, with output reference parameters.
- */
-void Leaf::Export(const std::vector<unsigned int> &_origin, const LeafNode _leafNode[], unsigned int _leafCount, const BagLeaf _bagLeaf[], unsigned int _bagBits[], unsigned int _trainRow, std::vector< std::vector<unsigned int> > &rowTree, std::vector< std::vector<unsigned int> >&sCountTree) {
-  unsigned int _nTree = _origin.size();
-  unsigned int bagOrig = 0;
-  BitMatrix *bag = new BitMatrix(_bagBits, _trainRow, _nTree);
-  for (unsigned int tIdx = 0; tIdx < _nTree; tIdx++) {
-    unsigned int bagCount = BagCount(_origin, _leafNode, tIdx, _leafCount);
-    rowTree[tIdx] = std::vector<unsigned int>(bagCount);
-    sCountTree[tIdx] = std::vector<unsigned int>(bagCount);
-    TreeExport(bag, _bagLeaf, bagOrig, tIdx, rowTree[tIdx], sCountTree[tIdx]);
-    bagOrig += bagCount;
-  }
-  delete bag;
-}
-
-
-void Leaf::TreeExport(const BitMatrix *bag, const BagLeaf _bagLeaf[], unsigned int bagOrig, unsigned int tIdx, std::vector<unsigned int> &rowTree, std::vector<unsigned int> &sCountTree) {
-  unsigned int bagIdx = 0;
-  for (unsigned int row = 0; row < bag->NRow(); row++) {
-    if (bag->TestBit(row, tIdx)) {
-      rowTree[bagIdx] = row;
-      sCountTree[bagIdx] = _bagLeaf[bagOrig + bagIdx].SCount();
-      bagIdx++;
-    }
+void LBCresc::dumpRaw(unsigned char leafRaw[]) const {
+  for (size_t i = 0; i < leaf.size() * sizeof(Leaf); i++) {
+    leafRaw[i] = ((unsigned char*) &leaf[0])[i];
   }
 }
 
-
-/**
-   @brief Static exporter of LeafNode into per-tree vector of vectors.
-
-   @param _leafCount is the count of leaves in the forest.
-
-   @return void, with output reference parameters.
- */
-void LeafNode::Export(const std::vector<unsigned int> &_origin, const LeafNode _leafNode[], unsigned int _leafCount, std::vector< std::vector<double> > &_score, std::vector< std::vector<unsigned int> > &_extent) {
-  for (unsigned int tIdx = 0; tIdx < _origin.size(); tIdx++) {
-    unsigned int leafCount = LeafCount(_origin, _leafCount, tIdx);
-    _score[tIdx] = std::vector<double>(leafCount);
-    _extent[tIdx] = std::vector<unsigned int>(leafCount);
-    TreeExport(_leafNode, leafCount, _origin[tIdx], _score[tIdx], _extent[tIdx]); 
-  }
+void LFTrain::cacheBLRaw(unsigned char blRaw[]) const {
+  bbCresc->dumpRaw(blRaw);
 }
 
 
-/**
-   @brief Per-tree exporter into separate vectors.
- */
-void LeafNode::TreeExport(const LeafNode _leafNode[], unsigned int _leafCount, unsigned int treeOrig, std::vector<double> &scoreTree, std::vector<unsigned int> &extentTree) {
-  for (unsigned int leafIdx = 0; leafIdx < _leafCount; leafIdx++) {
-    _leafNode[treeOrig + leafIdx].Ref(scoreTree[leafIdx], extentTree[leafIdx]);
+void BBCresc::dumpRaw(unsigned char blRaw[]) const {
+  for (size_t i = 0; i < bagSample.size() * sizeof(BagSample); i++) {
+    blRaw[i] = ((unsigned char*) &bagSample[0])[i];
   }
 }
 
-
-/**
- */
-void LeafCtg::Export(const std::vector<unsigned int> &_origin, const LeafNode _leafNode[], unsigned int _leafCount, const BagLeaf _bagLeaf[], unsigned int _bagBits[], unsigned int _trainRow, const double _weight[], unsigned int _ctgWidth, std::vector<std::vector<unsigned int> > &rowTree, std::vector<std::vector<unsigned int> > &sCountTree, std::vector<std::vector<double> > &scoreTree, std::vector<std::vector<unsigned int> > &extentTree, std::vector<std::vector<double> > &weightTree) {
-  Leaf::Export(_origin, _leafNode, _leafCount, _bagLeaf, _bagBits, _trainRow, rowTree, sCountTree);
-  LeafNode::Export(_origin, _leafNode, _leafCount, scoreTree, extentTree);
-  for (unsigned int tIdx = 0; tIdx < _origin.size(); tIdx++) {
-    unsigned int leafCount =   LeafNode::LeafCount(_origin, _leafCount, tIdx);
-    weightTree[tIdx] = std::vector<double>(leafCount * _ctgWidth);
-    TreeExport(_weight, _ctgWidth, _origin[tIdx] * _ctgWidth, leafCount, weightTree[tIdx]);
-  }
-}
-
-
-void LeafCtg::TreeExport(const double leafWeight[], unsigned int _ctgWidth, unsigned int treeOrig, unsigned int leafCount, std::vector<double> &weightTree) {
-  unsigned int off = 0;
-  for (unsigned int leafIdx = 0; leafIdx < leafCount; leafIdx++) {
-    for (unsigned int ctg = 0; ctg < _ctgWidth; ctg++) {
-      weightTree[off] = leafWeight[treeOrig + off];
-      off++;
-    }
-  }
+void LFTrainCtg::dumpProb(double probOut[]) const {
+  probCresc->dump(probOut);
 }

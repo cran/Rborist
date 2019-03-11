@@ -19,37 +19,167 @@
 
 #include <vector>
 
+#include "typeparam.h"
 
-typedef std::pair<double, unsigned int> RankedPair;
+/**
+   @brief Value and row of ranked response.
+ */
+struct ValRow {
+  double val;
+  unsigned int row;
+
+  void init(double val, unsigned int row) {
+    this->val = val;
+    this->row = row;
+  }
+};
+
+/**
+   @brief Rank and sample-count values derived from BagSample.  Client:
+   quantile inference.
+ */
+struct RankCount {
+  unsigned int rank;
+  unsigned int sCount;
+
+  void init(unsigned int rank, unsigned int sCount) {
+    this->rank = rank;
+    this->sCount = sCount;
+  }
+};
+
 
 /**
  @brief Quantile signature.
 */
 class Quant {
-  const class PredictReg *predictReg;
-  const class LeafPerfReg *leafReg;
-  const std::vector<double> &yTrain;
-  std::vector<RankedPair> yRanked;
-  const std::vector<double> &qVec;
-  const unsigned int qCount;
-  std::vector<class RankCount> rankCount; // forest-wide, by sample.
-  unsigned int logSmudge;
-  unsigned int binSize;
-  std::vector<unsigned int> binTemp; // Helper vector.
-  std::vector<unsigned int> sCountSmudge;
+  const class LeafFrameReg *leafReg; // Summary of trained terminal nodes.
+  const double *yTrain; // Training response.
+  vector<ValRow> yRanked; // ordered version of yTrain, with ranks.
+  const double* quantile; // quantile values over which to predict.
+  const unsigned int qCount; // # quantile values, above.
+  vector<double> qPred; // predicted quantiles
+  vector<RankCount> rankCount; // forest-wide, by sample.
+  unsigned int logSmudge; // log2 of smudging factor, if smudging.
+  unsigned int binSize; // Width of binning parameter.
+  vector<unsigned int> binTemp; // Helper vector.
+  vector<unsigned int> sCountSmudge; // Smudged sample counts.
 
-  int *leafPos;
+  /**
+     @brief Computes the count and rank of every bagged sample in the forest.
+
+     @param baggedRows encodes whether a tree/row pair is bagged.
+
+     @return void, with side-effected rankCount vector.
+  */
+  void rankCounts(const class BitMatrix *baggedRows);
   
-  unsigned int BinSize(unsigned int nRow, unsigned int qBin, unsigned int &_logSmudge);
-  void SmudgeLeaves();
-  void Leaves(unsigned int rowBlock, double qRow[]);
-  unsigned int RanksExact(unsigned int tIdx, unsigned int leafIdx, std::vector<unsigned int> &sampRanks);
-  unsigned int RanksSmudge(unsigned int tIdx, unsigned int LeafIdx, std::vector<unsigned int> &sampRanks);
+
+  /**
+     @brief Computes bin size and smudging factor.
+
+     @param nRow is the number of rows used to train.
+
+     @param qBin is the bin size specified by the front end.
+
+     @param[out] logSmudge outputs the log2 of the smudging factor.
+
+     @return bin size.
+  */
+  unsigned int imputeBinSize(unsigned int nRow,
+                             unsigned int qBin,
+                             unsigned int &_logSmudge);
+  /**
+   @brief Builds a vector of binned sample counts for wide leaves.
+ */
+  void smudgeLeaves();
+
+  /**
+     @brief Writes the quantile values for a given row.
+
+     @param rowBlock is the block-relative row index.
+
+     @param qRow[] outputs the 'qCount' quantile values.
+  */
+  void predictRow(const class Predict *predict,
+                  unsigned int rowBlock,
+                  double qRow[]);
+
+
+  /**
+     @brief Accumulates the ranks assocated with predicted leaf.
+
+     @param tIdx is a tree index.
+
+     @param leafIdx is a tree-relative leaf index.
+
+     @param[in,out] sampRanks counts the number of samples at a given rank.
+
+     @return count of samples subsumed by leaf.
+  */
+  unsigned int ranksExact(unsigned int tIdx,
+                          unsigned int leafIdx,
+                          vector<unsigned int> &sampRanks);
+
+
+  /**
+     @brief Accumulates binned ranks assocated with a predicted leaf.
+
+     @param tIdx is a tree index.
+
+     @param leafIdx is the tree-relative leaf index.
+
+     @param sampRanks[in,out] counts the number of samples at a given rank.
+     
+     @return count of samples subsumed by leaf.
+ */
+  unsigned int ranksSmudge(unsigned int tIdx,
+                           unsigned int LeafIdx,
+                           vector<unsigned int> &sampRanks);
 
   
  public:
-  Quant(const class PredictReg *_predictReg, const class LeafPerfReg *_leafReg, const std::vector<double> &_qVec, unsigned int qBin);
-  void PredictAcross(unsigned int rowStart, unsigned int rowEnd, double qPred[]);
+  /**
+     @brief Constructor for invocation from within core.
+
+     Parameters mirror simililarly-named members.
+   */
+  Quant(const class LeafFrameReg *leafReg_,
+        const class BitMatrix *baggedRows,
+        const double* quantile_,
+        unsigned int qCount_,
+        unsigned int qBin);
+
+  /**
+     @brief Getter for number of quantiles.
+
+     @return qCount value.
+   */
+  unsigned int getNQuant() const {
+    return qCount;
+  }
+
+
+  /**
+     @brief Accessor for predicted quantiles.
+
+     @return pointer to base of quantile predictions.
+   */
+  const double *QPred() const {
+    return &qPred[0];
+  }
+  
+  
+  /**
+     @brief Fills in the quantile leaves for each row within a contiguous block.
+
+     @param rowStart is the first row at which to predict.
+
+     @param rowEnd is first row at which not to predict.
+  */
+  void predictAcross(const class Predict *predict,
+                     unsigned int rowStart,
+                     unsigned int rowEnd);
 };
 
 #endif

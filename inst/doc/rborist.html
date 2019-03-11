@@ -58,7 +58,7 @@ hljs.initHighlightingOnLoad();
 </script>
 
 <!-- MathJax scripts -->
-<script type="text/javascript" src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+<script type="text/javascript" src="https://cdn.bootcss.com/mathjax/2.7.0/MathJax.js?config=TeX-MML-AM_CHTML">
 </script>
 
 
@@ -325,7 +325,12 @@ hr {
 <pre><code class="r">       rs &lt;- Rborist(x, y, nLevel = 1)
 </code></pre>
 
-<p>As with other size-based constraints, constraining level depth also results in faster execution.</p>
+<p>As with several other size-based constraints, constraining level depth also results in faster execution.</p>
+
+<p>Option <em>maxLeaf</em> limits the number of leaves (terminals) present in a tree.  Unlike other size constraints described so far, <em>maxLeaf</em> is enforced <em>after</em> training, so as not to bias tree shape.  While this pruning operation is quite fast, then, limiting the number of leaves will not speed the training process.</p>
+
+<pre><code class="r">       rs &lt;- Rborist(x, y, maxLeaf = 13}
+</code></pre>
 
 <p>Option <em>minInfo</em> sets a splitting threshold based on relative information gain.  A splitting candidate is rejected if the ratio of information content between a node and its potential successors lies below the threshold.</p>
 

@@ -1,4 +1,4 @@
-// Copyright (C)  2012-2017  Mark Seligman
+// Copyright (C)  2012-2019   Mark Seligman
 //
 // This file is part of ArboristBridgeR.
 //
@@ -16,30 +16,37 @@
 // along with ArboristBridgeR.  If not, see <http://www.gnu.org/licenses/>.
 
 /**
-   @file rcppRowrank.h
+   @file rowSample.cc
 
-   @brief C++ class definitions for managing RowRank object.
+   @brief Interface to Rcpp base methods implementing sampling.
 
    @author Mark Seligman
-
  */
 
-
-#ifndef ARBORIST_RCPP_ROWRANK_H
-#define ARBORIST_RCPP_ROWRANK_H
-
-#include <Rcpp.h>
-using namespace Rcpp;
-
-class RcppRowrank {
-  static IntegerVector iv1, iv2, iv3, iv4;
-  static NumericVector nv1;
+#include "rowSample.h"
 
 
- public:
-  static void Unwrap(SEXP sRowRank, unsigned int *&feNumOff, double *&feNumVal, unsigned int *&feRow, unsigned int *&feRank, unsigned int *&feRLE, unsigned int &feRLELength);
-  static void Clear();
-};
+bool RowSample::withRepl = false;
+
+NumericVector weightNull(0);
+NumericVector &RowSample::weight = weightNull;
+
+IntegerVector rowSeqNull(0);
+IntegerVector &RowSample::rowSeq = rowSeqNull;
 
 
-#endif
+void RowSample::init(const NumericVector &feWeight, bool withRepl_) {
+  weight = feWeight;
+  rowSeq = seq(0, feWeight.length()-1);
+
+  withRepl = withRepl_;
+}
+
+
+IntegerVector RowSample::sampleRows(unsigned int nSamp) {
+  BEGIN_RCPP
+  RNGScope scope;
+  return sample(rowSeq, nSamp, withRepl, clone(weight));
+
+  END_RCPP
+}

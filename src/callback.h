@@ -1,4 +1,4 @@
-// Copyright (C)  2012-2017   Mark Seligman
+// Copyright (C)  2012-2019   Mark Seligman
 //
 // This file is part of ArboristBridgeR.
 //
@@ -18,7 +18,7 @@
 /**
    @file callback.h
 
-   @brief Exposes utility functions provided by the front end.
+   @brief Exposes utility functions implemented by the front end.
 
    @author Mark Seligman
  */
@@ -26,11 +26,28 @@
 #ifndef ARBORIST_CALLBACK_H
 #define ARBORIST_CALLBACK_H
 
-class CallBack {
- public:
-  static void SampleInit(unsigned int _nRow, const double _sampleWeight[], bool _withRepl);
-  static void SampleRows(unsigned int nSamp, int out[]);
-  static void RUnif(int len, double out[]);
+#include <vector>
+using namespace std;
+
+struct CallBack {
+  /**
+    @brief Call-back to Rcpp implementation of row sampling.
+
+    @param nSamp is the number of samples to draw.
+
+    @return copy of sampled row indices.
+  */
+  static vector<unsigned int> sampleRows(unsigned int nSamp);
+
+
+  /**
+    @brief Call-back to R's uniform random-variate generator.
+
+    @param len is number of variates to generate.
+
+    @return std::vector copy of R-generated random variates.
+  */
+  static vector<double> rUnif(size_t len);
 };
 
 #endif

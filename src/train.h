@@ -18,7 +18,13 @@
 
 #include <string>
 #include <vector>
-//using namespace std;
+
+#include "typeparam.h"
+
+/**
+   @brief Short-lived bundle of objects created for training a block of trees.
+ */
+typedef pair<shared_ptr<class Sample>, shared_ptr<class PreTree> > TrainSet;
 
 /**
    @brief Interface class for front end.  Holds simulation-specific parameters
@@ -27,44 +33,215 @@
 class Train {
   static constexpr double slopFactor = 1.2; // Estimates tree growth.
   static unsigned int trainBlock; // Front-end defined buffer size.
-  const unsigned int nTree;
 
-  class ForestTrain *forest;
-  std::vector<double> &predInfo; // E.g., Gini gain:  nPred.
-  const class Response *response;
-  const class Coproc *coproc;
-
-  static void DeImmutables();
+  const unsigned int nRow; // Number of rows to train.
+  const unsigned int treeChunk; // Local number of trees to train.
+  unique_ptr<class BitMatrix> bagRow; // Local bag section:  treeChunk x nRow
+  unique_ptr<class ForestTrain> forest; // Locally-trained forest block.
+  vector<double> predInfo; // E.g., Gini gain:  nPred.
 
   /**
-  */
-  Train(const std::vector<unsigned int> &_yCtg, unsigned int _ctgWidth, const std::vector<double> &_yProxy, std::vector<unsigned int> &_origin, std::vector<unsigned int> &_facOrigin, std::vector<double> &_predInfo, std::vector<class ForestNode> &_forestNode, std::vector<unsigned int> &_facSplit, std::vector<unsigned int> &_leafOrigin, std::vector<class LeafNode> &_leafNode, std::vector<class BagLeaf> &_bagLeaf, std::vector<unsigned int> &_bagBits, std::vector<double> &_weight, bool _enableCoproc, std::string &diag);
+     @brief Trains a chunk of trees.
 
- /**
+     @param frameTrain summarizes the predictor characteristics.
+
+     @param rankedPair contains the presorted observation statistics.
   */
-  Train(const std::vector<double> &_y, const std::vector<unsigned int> &_row2Rank, std::vector<unsigned int> &_origin, std::vector<unsigned int> &_facOrigin, std::vector<double> &_predInfo, std::vector<class ForestNode> &_forestNode, std::vector<unsigned int> &_facSplit, std::vector<unsigned int> &_leafOrigin, std::vector<class LeafNode> &_leafNode, std::vector<class BagLeaf> &_bagLeaf, std::vector<unsigned int> &_bagBits, bool _enableCoproc, std::string &diag);
+  void trainChunk(const class FrameTrain *frameTrain,
+                  const class RankedSet *rankedPair);
+
+  unique_ptr<class LFTrain> leaf; // Crescent leaf object.
+
+public:
+
+  /**
+     @brief Regression constructor.
+  */
+  Train(const class FrameTrain *frameTrain,
+        const double *y,
+        unsigned int treeChunk_);
+
+  
+  /**
+     @brief Classification constructor.
+  */
+  Train(const class FrameTrain *frameTrain,
+        const unsigned int *yCtg,
+        unsigned int nCtg,
+        const double *yProxy,
+        unsigned int nTree,
+        unsigned int treeChunk_);
 
   ~Train();
+
+
+  /**
+     @brief Getter for raw leaf pointer.
+   */
+  const class LFTrain *getLeaf() const {
+    return leaf.get();
+  }
+
+
+  /**
+     @brief Getter for splitting information values.
+
+     @return reference to per-preditor information vector.
+   */
+  const vector<double> &getPredInfo() const {
+    return predInfo;
+  }
+
+
+  /**
+     @brief Static initialization methods.
+  */
+
+  /**
+     @brief Registers training tree-block count.
+
+     @param trainBlock_ is the number of trees by which to block.
+  */
+  static void initBlock(unsigned int trainBlock);
+
+  /**
+     @brief Registers histogram of splitting ranges for numerical predictors.
+     
+     @param splitQuant is a per-predictor quantile specification.
+  */
+  static void initCDF(const vector<double> &splitQuant);
+
+  /**
+     @brief Registers per-node probabilities of predictor selection.
+  */
+  static void initProb(unsigned int predFixed,
+                       const vector<double> &predProb);
+
+
+  /**
+     @brief Registers tree-shape parameters.
+  */
+  static void initTree(unsigned int nSamp,
+                       unsigned int minNode,
+                       unsigned int leafMax);
+
+  /**
+     @brief Initializes static OMP thread state.
+
+     @param nThread is a user-specified thread request.
+   */
+  static void initOmp(unsigned int nThread);
   
-  void TrainForest(const class PMTrain *pmTrain, const class RowRank *rowRank);
+  /**
+     @brief Registers response-sampling parameters.
 
- public:
-/**
-   @brief Static initializer.
+     @param nSamp is the number of samples requested.
+  */
+  static void initSample(unsigned int nSamp);
 
-   @return void.
- */
-  static void Init(unsigned int _nPred, unsigned int _nTree, unsigned int _nSamp, const std::vector<double> &_feSampleWeight, bool withRepl, unsigned int _trainBlock, unsigned int _minNode, double _minRatio, unsigned int _totLevels, unsigned int _leafMax, unsigned int _ctgWidth, unsigned int _predFixed, const double _splitQuant[], const double _predProb[], bool _thinLeaves, const double _regMono[] = nullptr);
+  /**
+     @brief Registers width of categorical response.
 
-  static void Regression(const unsigned int _feRow[], const unsigned int _feRank[], const unsigned int _feNumOff[], const double _feNumVal[], const unsigned int _feRLE[], unsigned int _rleLength, const std::vector<double> &_y, const std::vector<unsigned int> &_row2Rank, std::vector<unsigned int> &_origin, std::vector<unsigned int> &_facOrigin, std::vector<double> &_predInfo, const std::vector<unsigned int> &_feCard, std::vector<class ForestNode> &_forestNode, std::vector<unsigned int> &_facSplit, std::vector<unsigned int> &_leafOrigin, std::vector<class LeafNode> &_leafNode, double _autoCompress, std::vector<class BagLeaf> &_bagLeaf, std::vector<unsigned int> &_bagBits, bool _enableCoproc, std::string &diag);
+     @pram ctgWidth is the number of training response categories.
+  */
+  static void initCtgWidth(unsigned int ctgWidth);
 
-  static void Classification(const unsigned int _feRow[], const unsigned int _feRank[], const unsigned int _feNumOff[], const double _feNumVal[], const unsigned int _feRLE[], unsigned int _rleLength, const std::vector<unsigned int>  &_yCtg, unsigned int _ctgWidth, const std::vector<double> &_yProxy, std::vector<unsigned int> &_origin, std::vector<unsigned int> &_facOrigin, std::vector<double> &_predInfo, const std::vector<unsigned int> &_feCard, std::vector<class ForestNode> &_forestNode, std::vector<unsigned int> &_facSplit, std::vector<unsigned int> &_leafOrigin, std::vector<class LeafNode> &_leafNode, double _autoCompress, std::vector<class BagLeaf> &_bagLeaf, std::vector<unsigned int> &_bagBits, std::vector<double> &_weight, bool _enableCoproc, std::string &diag);
+  /**
+     @brief Registers parameters governing splitting.
+     
+     @param minNode is the mininal number of sample indices represented by a tree node.
 
-  void Reserve(std::vector<class PreTree*> &ptBlock);
-  unsigned int BlockPeek(std::vector<class PreTree*> &ptBlock, unsigned int &blockFac, unsigned int &blockBag, unsigned int &blockLeaf, unsigned int &maxHeight);
-  void BlockConsume(const class PMTrain *pmTrain, const std::vector<class Sample*> &sampleBlock, std::vector<class PreTree*> &ptBlock, unsigned int blockStart);
-  void TreeBlock(const class PMTrain *pmTrain, const class RowRank *rowRank, unsigned int tStart, unsigned int tCount);
+     @param totLevels is the maximum tree depth to train.
+
+     @param minRatio is the minimum information ratio of a node to its parent.
+  */
+  static void initSplit(unsigned int minNode,
+                        unsigned int totLevels,
+                        double minRatio);
+  
+  /**
+     @brief Registers monotone specifications for regression.
+
+     @param regMono has length equal to the predictor count.  Only
+     numeric predictors may have nonzero entries.
+  */
+  static void initMono(const class FrameTrain* frameTrain,
+                       const vector<double> &regMono);
+
+  /**
+     @brief Static de-initializer.
+   */
+  static void deInit();
+
+  static unique_ptr<Train> regression(
+       const class FrameTrain *frameTrain,
+       const class RankedSet *rankedPair,
+       const double *y,
+       unsigned int treeChunk);
+
+
+  static unique_ptr<Train> classification(
+       const class FrameTrain *frameTrain,
+       const class RankedSet *rankedPair,
+       const unsigned int *yCtg,
+       const double *yProxy,
+       unsigned int nCtg,
+       unsigned int treeChunk,
+       unsigned int nTree);
+
+  /**
+     @brief Attempts to extimate storage requirements for block after
+     training first tree.
+   */
+  void reserve(vector<TrainSet> &treeBlock);
+
+  /**
+     @brief Accumulates block size parameters as clues to forest-wide sizes.
+
+     Estimates improve with larger blocks, at the cost of higher memory
+     footprint.  Obsolete:  about to exit.
+
+     @return sum of tree sizes over block.
+  */
+  unsigned int blockPeek(vector<TrainSet> &treeBlock,
+                         size_t &blockFac,
+                         size_t &blockBag,
+                         size_t &blockLeaf,
+                         size_t &maxHeight);
+
+  /**
+     @brief Builds segment of decision forest for a block of trees.
+
+     @param treeBlock is a vector of Sample, PreTree pairs.
+
+     @param blockStart is the starting tree index for the block.
+  */
+  void blockConsume(vector<TrainSet> &treeBlock,
+                    unsigned int blockStart);
+
+  /**
+     @brief  Creates a block of root samples and trains each one.
+
+     @return Wrapped collection of Sample, PreTree pairs.
+  */
+  vector<TrainSet> blockProduce(const class FrameTrain *frameTrain,
+                                const class RowRank *rowRank,
+                                unsigned int tStart,
+                                unsigned int tCount);
+
+  /**
+     @brief Getter for raw forest pointer.
+   */
+  const class ForestTrain *getForest() const {
+    return forest.get();
+  }
+
+  /**
+     @brief Dumps bag contents as raw characters.
+
+     @param[out] bbRaw
+   */
+  void cacheBagRaw(unsigned char bbRaw[]) const;
 };
-
 
 #endif

@@ -1,4 +1,4 @@
-# Copyright (C)  2012-2017   Mark Seligman
+# Copyright (C)  2012-2018   Mark Seligman
 ##
 ## This file is part of ArboristBridgeR.
 ##
@@ -15,15 +15,83 @@
 ## You should have received a copy of the GNU General Public License
 ## along with ArboristBridgeR.  If not, see <http://www.gnu.org/licenses/>.
 
-PreFormat.default <- function(x) {
-  predBlock <- PredBlock(x)
-  rowRank <- .Call("RcppRowRank", predBlock)
+# Pre-formats a data frame or buffer, if not already pre-formatted.
+# If already pre-formatted, verifies types of member fields.
+PreFormat.default <- function(x, verbose = FALSE) {
+    if (inherits(x, "PreFormat") || inherits(x, "PreTrain")) {
+        preFormat <- x
+        if (!inherits(preFormat$predBlock, "PredBlock")) {
+            stop("Missing PredBlock")
+        }
+        if (!inherits(preFormat$rankedSet, "RankedSet")) {
+            stop("Missing RankedSet")
+        }
+        if (verbose)
+            print("Training set already pre-formatted")
+    }
+    else {
+        if (verbose)
+            print("Beginning pre-formatting")
 
-  preTrain <- list(
-    predBlock = predBlock,
-    rowRank = rowRank
-  )
-  class(preTrain) <- "PreFormat"
+        predBlock <- PredBlock(x)
+        preFormat <- list(
+            predBlock = predBlock,
+            rankedSet = .Call("Presort", predBlock)
+        )
+        class(preFormat) <- "PreFormat"
+        if (verbose)
+            print("Pre-formatting completed")
+    }
 
-  preTrain
+    preFormat
+}
+
+
+# Groups predictors into like-typed blocks and creates zero-based type
+# summaries.
+#
+PredBlock <- function(x, sigTrain = NULL) {
+  # Argument checking:
+  if (any(is.na(x))) {
+    stop("NA not supported in design matrix")
+  }
+
+  # For now, only numeric and factor types supported.
+  #
+  if (is.data.frame(x)) {
+      dt <- data.table::setDT(x)
+      xFac <- data.matrix(Filter(function(col) ifelse(is.factor(col) && !is.ordered(col), TRUE, FALSE), dt)) - 1
+      xNum <- data.matrix(Filter(function(col) ifelse(is.numeric(col), TRUE, FALSE), dt))
+      if (ncol(xNum) + ncol(xFac) != ncol(dt)) {
+          stop("Frame column with unsupported data type")
+      }
+      lv <- sapply(dt, levels)
+      colCard <- sapply(dt, function(col) ifelse(is.numeric(col), 0, length(levels(col))))
+      predMap <- c(which(colCard == 0), which(colCard != 0)) - 1
+      if (!is.null(sigTrain) && any(colCard != 0)) {
+          xFac <- tryCatch(.Call("FrameReconcile", xFac, predMap, lv[colCard != 0], sigTrain), error = function(e) {stop(e)} )
+      }      
+
+      return(tryCatch(.Call("WrapFrame", dt, xNum, xFac, predMap, colCard[colCard != 0], lv[colCard != 0]), error = function(e) {stop(e)} ))
+  }
+  else if (inherits(x, "dgCMatrix")) {
+     return(tryCatch(.Call("FrameSparse", x), error= print))
+  }
+  else if (is.matrix(x)) {
+    if (is.integer(x)) {
+      return(tryCatch(.Call("FrameNum", data.matrix(x)), error=function(e) {stop(e)} ))
+    }
+    else if (is.numeric(x)) {
+      return(tryCatch(.Call("FrameNum", x), error=function(e) {stop(e)}))
+    }
+    else if (is.character(x)) {
+      stop("Character data not yet supported")
+    }
+    else {
+      stop("Unsupported matrix type")
+    }
+  }
+  else {
+    stop("Expecting data frame or matrix")
+  }
 }

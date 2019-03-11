@@ -1,4 +1,4 @@
-# Copyright (C)  2012-2017   Mark Seligman
+# Copyright (C)  2012-2018   Mark Seligman
 ##
 ## This file is part of ArboristBridgeR.
 ##
@@ -17,5 +17,5 @@
 "Validate" <-
 "Validate" <- function(preFormat, train, y, ctgCensus = "votes",
                              quantVec = NULL, quantiles = !is.null(quantVec),
-                             qBin = 5000)
+                             qBin = 5000, nThread = 0, verbose = FALSE)
     UseMethod("Validate")

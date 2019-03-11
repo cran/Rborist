@@ -1,4 +1,4 @@
-// Copyright (C)  2012-2017  Mark Seligman
+// Copyright (C)  2012-2019  Mark Seligman
 //
 // This file is part of ArboristBridgeR.
 //
@@ -15,32 +15,24 @@
 // You should have received a copy of the GNU General Public License
 // along with ArboristBridgeR.  If not, see <http://www.gnu.org/licenses/>.
 
-/**
-   @file rcppSample.h
-
-   @brief C++ class definitions for invocation of R methods implementing response sampling.   Can be extended for other instances of sampling.
-
-   @author Mark Seligman
-
- */
-
-
-#ifndef ARBORIST_RCPP_SAMPLE_H
-#define ARBORIST_RCPP_SAMPLE_H
 
 #include <Rcpp.h>
 using namespace Rcpp;
 
 /**
-   @brief Row-sampling parameters supplied by the front end are invariant, so can be cached as static.
- */
-class RcppSample {
-  static unsigned int nRow;
-  static bool withRepl;
-  static NumericVector &weight;
-public:
-  static void Init(unsigned int _nRow, const double feWeight[], bool _withRepl);
-  static void SampleRows(unsigned int nSamp, int out[]);
-};
+   @file rcppInit.h
 
-#endif
+   @brief C++ interface to R entry for symbol registration.
+
+   @author Mark Seligman
+ */
+
+
+/**
+   @brief Lights off symbol registry for package loading.
+
+   @param info is an external handle for symbol registration.
+
+   @return void.
+ */
+void R_init_Rborist(DllInfo *info);

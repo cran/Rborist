@@ -19,113 +19,208 @@
 #include <vector>
 #include <algorithm>
 
+#include "typeparam.h"
+
+
+/**
+   @brief Consolidates common components required by all prediction entries.
+ */
+struct PredictBox {
+  const class FramePredict* framePredict; // Frame of dense predictor blocks.
+  const class Forest* forest; // Trained forest.
+  const class BitMatrix* bag; // In-bag representation (or nullptr).
+  class LeafFrame* leafFrame; // Subclasses to regression or classification.
+
+  /**
+     @brief Constructor boxes training and output summaries.
+
+     @param nThread is the number of OMP threads requested.
+
+     Remaining parameters mirror similarly-named members.
+   */
+  PredictBox(const FramePredict* framePredict_,
+             const Forest* forest_,
+             const BitMatrix* bag_,
+             LeafFrame* leaf_,
+             unsigned int nThread);
+
+  ~PredictBox();
+};
+
+
 class Predict {
-  const unsigned int noLeaf; // Inattainable leaf index value.
- protected:
-  class PMPredict *pmPredict;
-  const unsigned int nTree;
-  const unsigned int nRow;
-  unsigned int *predictLeaves;
-
- public:  
-  
-  Predict(class PMPredict *_pmPredict, unsigned int _nTree, unsigned int _nRow, unsigned int _noLeaf);
-  virtual ~Predict();
-
-  static void Regression(const std::vector<double> &valNum, const std::vector<unsigned int> &rowStart, const std::vector<unsigned int> &runLength, const std::vector<unsigned int> &_predStart, double *_blockNumT, unsigned int *_blockFacT, unsigned int _nPredNum, unsigned int _nPredFac, const class ForestNode _forestNode[], const unsigned int _origin[], unsigned int nTree, unsigned int _facSplit[], size_t _facLen, const unsigned int _facOff[], unsigned int _nFac, std::vector<unsigned int> &_leafOrigin, const class LeafNode _leafNode[], unsigned int _leafCount, unsigned int _bagBits[], const std::vector<double> &yTrain, std::vector<double> &_yPred);
-
-
-  static void Quantiles(const std::vector<double> &valNum, const std::vector<unsigned int> &rowStart, const std::vector<unsigned int> &runLength, const std::vector<unsigned int> &_predStart, double *_blockNumT, unsigned int *_blockFacT, unsigned int _nPredNum, unsigned int _nPredFac, const class ForestNode _forestNode[], const unsigned int _origin[], unsigned int _nTree, unsigned int _facSplit[], size_t _facLen, const unsigned int _facOff[], unsigned int _nFac, std::vector<unsigned int> &_leafOrigin, const class LeafNode _leafNode[], unsigned int _leafCount, const class BagLeaf _bagLeaf[], unsigned int _bagLeafTot, unsigned int _bagBits[], const std::vector<double> &yTrain, std::vector<double> &_yPred, const std::vector<double> &quantVec, unsigned int qBin, std::vector<double> &qPred, bool validate);
-
-  static void Classification(const std::vector<double> &valNum, const std::vector<unsigned int> &rowStart, const std::vector<unsigned int> &runLength, const std::vector<unsigned int> &_predStart, double *_blockNumT, unsigned int *_blockFacT, unsigned int _nPredNum, unsigned int _nPredFac, const class ForestNode _forestNode[], const unsigned int _origin[], unsigned int _nTree, unsigned int _facSplit[], size_t _facLen, const unsigned int _facOff[], unsigned int _nFac, std::vector<unsigned int> &_leafOrigin, const class LeafNode _leafNode[], unsigned int _leafCount, unsigned int _bagBits[], unsigned int _rowTrain, const double _weight[], unsigned int _ctgWidth, std::vector<unsigned int> &_yPred, unsigned int *_census, const std::vector<unsigned int> &_yTest, unsigned int *_conf, std::vector<double> &_error, double *_prob);
-
-  const double *RowNum(unsigned int row) const;
-  const unsigned int *RowFac(unsigned int row) const;
-  
-
-  /**
-     @brief Assigns a proxy leaf index at the prediction coordinates passed.
-
-     @return void.
-   */
-  inline void BagIdx(unsigned int blockRow, unsigned int tc) {
-    predictLeaves[nTree * blockRow + tc] = noLeaf;
-  }
-
-  
-  /**
-   */
-  inline bool IsBagged(unsigned int blockRow, unsigned int tc) const {
-    return predictLeaves[nTree * blockRow + tc] == noLeaf;
-  }
+  unsigned int noLeaf; // Inattainable leaf index value.
+  const class FramePredict *framePredict; // Frame of dense blocks.
+  const class Forest *forest; // Trained forest.
+  const unsigned int nTree; // # trees used in training.
+  const unsigned int nRow; // # rows to predict.
+  const vector<size_t> treeOrigin; // Jagged accessor of tree origins.
+  unique_ptr<unsigned int[]> predictLeaves; // Tree-relative leaf indices.
 
 
   /**
      @brief Assigns a true leaf index at the prediction coordinates passed.
 
-     @return void.
+     @param blockRow is a block-relative row offset.
+
+     @param tc is the index of the current tree.
+
+     @param leafIdx is the leaf index to record.
    */
-  inline void LeafIdx(unsigned int blockRow, unsigned int tc, unsigned int leafIdx) {
+  inline void predictLeaf(unsigned int blockRow,
+                      unsigned int tc,
+                      unsigned int leafIdx) {
     predictLeaves[nTree * blockRow + tc] = leafIdx;
   }
 
-  
+
   /**
-     @brief Accessor for prediction at specified coordinates.
+     @brief Manages row-blocked prediction across trees.
+
+     @param leaf records the predicted values.
+
+     @param bag summarizes the bagged rows.
+
+     @param quant is non-null iff quantile prediction specified.
    */
-  inline unsigned int LeafIdx(unsigned int blockRow, unsigned int tc) const {
-    return predictLeaves[nTree * blockRow + tc];
-  }
-
-  inline const class PMPredict *PredMap() const {
-    return pmPredict;
-  }
-};
-
-
-class PredictReg : public Predict {
-  const class LeafPerfReg *leafReg;
-  const std::vector<double> &yTrain;
-  std::vector<double> &yPred;
-  double defaultScore;
-  void Score(unsigned int rowStart, unsigned int rowEnd);
-  double DefaultScore();
- public:
-  PredictReg(PMPredict *_pmPredict, const class LeafPerfReg *_leafReg, const std::vector<double> &_yTrain, unsigned int _nTree, std::vector<double> &_yPred);
-  ~PredictReg() {}
-
-  void PredictAcross(const class Forest *forest);
-  void PredictAcross(const Forest *forest, class Quant *quant, double qPred[], bool validate);
+  void predictAcross(class LeafFrame* leaf,
+                     const class BitMatrix *bag,
+                     class Quant *quant = nullptr);
 
   
   /**
-     @brief Access to training response vector.
+     @brief Dispatches prediction on a block of rows, by predictor type.
 
-     @return constant reference to training response vector.
+     @param rowStart is the starting row over which to predict.
+
+     @param rowEnd is the final row over which to predict.
+
+     @param bag is the packed in-bag representation, if validating.
+  */
+  void predictBlock(unsigned int rowStart,
+                    unsigned int rowEnd,
+                    const class BitMatrix *bag);
+
+  /**
+     @brief Multi-row prediction with predictors of both numeric and factor type.
+     @param rowStart is the first row in the block.
+
+     @param rowEnd is the first row beyond the block.
+     
+     @param bag indicates whether prediction is restricted to out-of-bag data.
+ */
+  void predictBlockMixed(unsigned int rowStart,
+                    unsigned int rowEnd,
+                    const class BitMatrix *bag);
+  
+
+  /**
+     @brief Multi-row prediction with predictors of only numeric.
+
+     Parameters as with mixed case, above.
+  */
+  void predictBlockNum(unsigned int rowStart,
+                    unsigned int rowEnd,
+                    const class BitMatrix *bag);
+
+/**
+   @brief Multi-row prediction with predictors of only factor type.
+
+   Parameters as with mixed case, above.
+ */
+  void predictBlockFac(unsigned int rowStart,
+                    unsigned int rowEnd,
+                    const class BitMatrix *bag);
+  
+
+  /**
+     @brief Prediction of single row with mixed predictor types.
+
+     @param row is the absolute row of data over which a prediction is made.
+
+     @param blockRow is the row's block-relative row index.
+
+     @param treeNode is the base of the forest's tree nodes.
+
+     @param facSplit is the base of the forest's split-value vector.
+
+     @param bag indexes out-of-bag rows, and may be null.
+  */
+  void rowMixed(unsigned int row,
+                unsigned int blockRow,
+                const class TreeNode *treeNode,
+                const class BVJagged *facSplit,
+                const class BitMatrix *bag);
+
+  /**
+     @brief Prediction over a single row with factor-valued predictors only.
+
+     Parameters as in mixed case, above.
+  */
+  void rowFac(unsigned int row,
+              unsigned int blockRow,
+              const class TreeNode *treeNode,
+              const class BVJagged *facSplit,
+              const class BitMatrix *bag);
+  
+  /**
+     @brief Prediction of a single row with numeric-valued predictors only.
+
+     Parameters as in mixed case, above.
    */
-  inline const std::vector<double> &YTrain() const {
-    return yTrain;
+  void rowNum(unsigned int row,
+              unsigned int blockRow,
+              const class TreeNode *treeNode,
+              const class BitMatrix *bag);
+
+ public:  
+  static const unsigned int rowBlock = 0x2000; // Block size.
+  
+  Predict(const PredictBox* box);
+
+  /**
+     @brief Quantile prediction entry from bridge.
+
+     @param box summarizes the prediction environment.
+
+     @param quantile specifies the quantiles at which to predict.
+
+     @param nQuant are the number of quantiles specified.
+
+     @param qBin specifies granularity of prediction.
+
+     @return summary of predicted quantiles.
+   */
+  static unique_ptr<class Quant> predictQuant(const PredictBox* box,
+                                              const double* quantile,
+                                              unsigned int nQuant,
+                                              unsigned int qBin);
+
+  /**
+     @brief Generic entry from bridge.
+
+     @param box summarizes the prediction environment.
+   */
+  static void predict(const PredictBox* box);
+
+  
+  /**
+     @brief Indicates whether a given row and tree pair is in-bag.
+
+     @param blockRow is the block-relative row position.
+
+     @param tc is the absolute tree index.
+
+     @param[out] termIdx is the predicted tree-relative index.
+
+     @return whether pair is bagged.
+   */
+  inline bool isBagged(unsigned int blockRow,
+                       unsigned int tc,
+                       unsigned int &termIdx) const {
+    termIdx = predictLeaves[nTree * blockRow + tc];
+    return termIdx == noLeaf;
   }
 };
 
-
-class PredictCtg : public Predict {
-  const class LeafPerfCtg *leafCtg;
-  const unsigned int ctgWidth;
-  std::vector<unsigned int> &yPred;
-  unsigned int defaultScore;
-  std::vector<double> defaultWeight;
-  void Validate(const std::vector<unsigned int> &yTest, unsigned int confusion[], std::vector<double> &error);
-  void Vote(double *votes, unsigned int census[]);
-  void Prob(double *prob, unsigned int rowStart, unsigned int rowEnd);
-  void Score(double *votes, unsigned int rowStart, unsigned int rowEnd);
-  unsigned int DefaultScore();
-  void DefaultInit();
-  double DefaultWeight(double *weightPredict);
- public:
-  PredictCtg(class PMPredict *_pmPredict, const class LeafPerfCtg *_leafCtg, unsigned int _nTree, std::vector<unsigned int> &_yPred);
-  ~PredictCtg();
-
-  void PredictAcross(const class Forest *forest, unsigned int *census, const std::vector<unsigned int> &yTest, unsigned int *conf, std::vector<double> &error, double *prob);
-};
 #endif

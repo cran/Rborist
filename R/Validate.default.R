@@ -1,4 +1,4 @@
-# Copyright (C)  2012-2017   Mark Seligman
+# Copyright (C)  2012-2018   Mark Seligman
 ##
 ## This file is part of ArboristBridgeR.
 ##
@@ -16,25 +16,35 @@
 ## along with ArboristBridgeR.  If not, see <http://www.gnu.org/licenses/>.
 "Validate.default" <- function(preFormat, train, y, ctgCensus = "votes",
                              quantVec = NULL, quantiles = !is.null(quantVec),
-                             qBin = 5000) {
+                             qBin = 5000, nThread = 0, verbose = FALSE) {
   if (is.null(preFormat$predBlock)) {
-    stop("Incomplete PreFormat object")
+    stop("Pre-formatted observations required for verification")
+  }
+  if (is.null(train$bag)) {
+    stop("Bag required for verification")
   }
   if (is.null(train$forest)) {
-    stop("Incomplete Train object")
+    stop("Trained forest required for verification")
   }
   if (is.null(train$leaf)) {
-    stop("Missing leaf information")
+    stop("Leaf information required for verification")
   }
-  predBlock <- preFormat$predBlock
-  forest <- train$forest
-  leaf <- train$leaf
+  if (nThread < 0)
+    stop("Thread count must be nonnegative")
+
+  ValidateDeep(preFormat$predBlock, train, y, ctgCensus, quantVec, quantiles, qBin, nThread, verbose)
+}
+
+
+ValidateDeep <- function(predBlock, objTrain, y, ctgCensus, quantVec, quantiles, qBin, nThread, verbose) {
+  if (verbose)
+      print("Beginning validation");
   if (is.factor(y)) {
     if (ctgCensus == "votes") {
-      validation <- tryCatch(.Call("RcppValidateVotes", predBlock, forest, leaf, y), error = function(e) { stop(e) })
+      validation <- tryCatch(.Call("ValidateVotes", predBlock, objTrain, y, nThread), error = function(e) { stop(e) })
     }
     else if (ctgCensus == "prob") {
-      validation <- tryCatch(.Call("RcppValidateProb", predBlock, forest, leaf, y), error = function(e) { stop(e) })
+      validation <- tryCatch(.Call("ValidateProb", predBlock, objTrain, y, nThread), error = function(e) { stop(e) })
     }
     else {
       stop(paste("Unrecognized ctgCensus type:  ", ctgCensus))
@@ -45,12 +55,15 @@
       if (is.null(quantVec)) {
         quantVec <- DefaultQuantVec()
       }
-      validation <- tryCatch(.Call("RcppValidateQuant", predBlock, forest, leaf, y, quantVec, qBin), error = function(e) { stop(e) })
+      validation <- tryCatch(.Call("ValidateQuant", predBlock, objTrain, y, quantVec, qBin, nThread), error = function(e) { stop(e) })
     }
     else {
-      validation <- tryCatch(.Call("RcppValidateReg", predBlock, forest, leaf, y), error = function(e) { stop(e) })
+      validation <- tryCatch(.Call("ValidateReg", predBlock, objTrain, y, nThread), error = function(e) { stop(e) })
     }
   }
 
+  if (verbose)
+      print("Validation complete")
+  
   validation
 }

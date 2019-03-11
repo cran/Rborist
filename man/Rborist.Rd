@@ -14,7 +14,8 @@
 }
 
 \usage{
-\method{Rborist}{default} (x, y, nTree=500, withRepl = TRUE,
+\method{Rborist}{default} (x,
+                y,
                 autoCompress = 0.25,
                 ctgCensus = "votes",
                 classWeight = NULL,
@@ -22,8 +23,10 @@
                 minInfo = 0.01,
                 minNode = ifelse(is.factor(y), 2, 3),
                 nLevel = 0,
-                noValidate = FALSE,
                 nSamp = 0,
+                nThread = 0,
+                nTree = 500,
+                noValidate = FALSE,
                 predFixed = 0,
                 predProb = 0.0,
                 predWeight = NULL, 
@@ -35,7 +38,9 @@
                 splitQuant = NULL,
                 thinLeaves = FALSE,
                 treeBlock = 1,
-                pvtBlock = 8, ...)
+                verbose = FALSE,
+                withRepl = TRUE,
+                ...)
 }
 
 \arguments{
@@ -44,8 +49,6 @@
   as a numeric matrix.}
   \item{y}{ the response (outcome) vector, either numerical or
   categorical.  Row count must conform with \code{x}.}
-  \item{nTree}{ the number of trees to train.}
-  \item{withRepl}{whether row sampling is by replacement.}
   \item{autoCompress}{plurality above which to compress predictor values.}
   \item{ctgCensus}{report categorical validation by vote or by probability.}
   \item{classWeight}{proportional weighting of classification
@@ -55,8 +58,11 @@
   \item{minNode}{minimum number of distinct row references to split a node.}
   \item{nLevel}{maximum number of tree levels to train.  Zero denotes no
     limit.}
-  \item{noValidate}{whether to train without validation.}
   \item{nSamp}{number of rows to sample, per tree.}
+  \item{nThread}{suggests an OpenMP-style thread count.  Zero denotes
+    the default processor setting.}
+  \item{nTree}{ the number of trees to train.}
+  \item{noValidate}{whether to train without validation.}
   \item{predFixed}{number of trial predictors for a split (\code{mtry}).}
   \item{predProb}{probability of selecting individual predictor as trial splitter.}
   \item{predWeight}{relative weighting of individual predictors as trial
@@ -73,8 +79,8 @@
   order to reduce memory footprint.}
   \item{treeBlock}{maximum number of trees to train during a single
     level (e.g., coprocessor computing).}
-  \item{pvtBlock}{maximum number of trees to train in a block (e.g.,
-    cluster computing).}
+  \item{verbose}{indicates whether to output progress of training.}
+  \item{withRepl}{whether row sampling is by replacement.}
   \item{...}{not currently used.}
 }
 
@@ -84,57 +90,57 @@
   \item{forest}{ a list containing
     
     \code{forestNode}{ a vector of packed structures expressing splitting
-    predictors, splitting values, successor node deltas and leaf indices.}
+      predictors, splitting values, successor node deltas and leaf indices.}
 
-  \code{origin}{ a vector of tree starting positions within \code{forestNode}.}
+    \code{height}{ a vector of accumulated tree heights within \code{forestNode}.}
 
-  \code{facSplit}{ a vector of splitting factor values.}
+    \code{facSplit}{ a vector of splitting factor values.}
 
-  \code{facOrigin}{ a vector of tree starting positions within the
-    splitting factor values.}
+    \code{facHeight}{ a vector of accumulated tree heights positions within the splitting factor values.}
   }
-  \item{leaf}{ a list containing either of
+  a list containing either of:
+  \code{LeafReg}{ a list consisting of regression leaf data:
+      
+    \code{node}{ a packed structure expressing leaf scores and node counts.}
 
-    \code{BagRow}{ a vector of packed data structures, one per unique row
-    sample, containing a row index and the number of times the row is sampled.}
+    \code{nodeHeight}{ a vector of accumulated tree heights within
+      \code{node}.}
+
+    \code{bagHeight}{ a vector of accumulated bag counts, per tree.}
+
+    \code{bagSample}{ a vector of packed data structures, one per
+      unique row sample, containing the row index and number of times sampled.}
+
+    \code{yTrain}{ the training response.}
+  }
+  or
+  \code{LeafCtg}{ a list consisting of classification leaf data:
+      
+    \code{node}{ a packed structure expressing leaf scores and node counts.}
+
+    \code{nodeHeight}{ a vector of accumulated tree heights within
+      \code{node}.}
+
+    \code{bagHeight}{ a vector of accumulated bag counts, per tree.}
+
+    \code{bagSample}{ a vector of packed data structures, one per
+        unique row sample, containing the row index and number of times sampled.}
+      \code{weight}{ a vector of per-category probabilities, one set for
+        each sampled row.}    
     
-    \code{LeafReg}{ a list consisting of regression leaf data:
-      
-      \code{node}{ a packed structure expressing leaf scores and node counts.}
-
-      \code{origin}{ a vector of tree starting positions within
-	\code{node}.
-
-      \code{rank}{ a vector, one element per unique row sample, indicating
-	  the rank of the sampled row.}
-      }
-
-      \code{yRanked}{ a sorted vector of response values.}
-   }
-    or
-    \code{LeafCtg}{ a list consisting of classification leaf data:
-      
-      \code{node}{ a packed structure expressing leaf scores and node
-	counts.}
-
-      \code{origin}{ a vector of tree starting positions within
-	\code{node}.}
-
-      \code{weight}{ a matrix of weighted scores, per category per sample.}
-      
       \code{levels}{ a vector of strings containing the training response levels.}
-      }
-  }
-  \item{signature}{ a list consisting of training information needed for
-      separate testing and prediction:
+    }
+
+  \item{bag}{ a list consisting of bagged row information:
+
+    \code{raw}{ a packed bit matrix indicating whether a given row, tree
+      pair is bagged.}
+
+    \code{nRow}{ the number of rows employed in training.}
+
+    \code{nTree}{ the number of trained trees.}
     
-    \code{nRow}{ the number of rows used to train.}
-    
-    \code{predMap}{ a vector mapping core predictor indices back to their
-      respective front-end positions.}
-    
-    \code{level}{ a vector of strings vectors representing the training
-    response factor levels.}
+    \code{rowBytes}{ the row stride, in bytes.}
   }
 
   \item{training}{ a list containing information gleaned during training:
@@ -147,36 +153,33 @@
 
     \code{diag}{ strings containing unspecified diagnostic notes and observations.}
   }
-
-  \item{validation}{ a list containing the results of validation:
+  \item{validation}{ a list containing the results of validation, if requested:
     
     \code{ValidReg}{ a list of validation results for regression:
       
-      \code{yPred}{ a vector containing the predicted response.}
-
-      \code{mse}{ the mean-square error of prediction.}
+      \code{yPred}{ vector containing the predicted response.}
 
       \code{mae}{ the mean absolute error of prediction.}
-      
+    
+      \code{mse}{ the mean-square error of prediction.}
+
       \code{rsq}{ the r-squared statistic.}
 
-      \code{qPred}{ a matrix containing the prediction quantiles, if requested.}
+      \code{qPred}{ matrix containing the prediction quantiles, if requested.}
     }
-
-    \code{ValidCtg}{ a list of validation results for classification:
+    \code{ValidCtg}{ list of validation results for classification:
       
-      \code{yPred}{ a vector containing the predicted response.}
+      \code{yPred}{ vector containing the predicted response.}
 
-      \code{misprediction}{ a vector containing the classwise
-	misprediction rates.}
-
-      \code{oobError}{ the out-of-bag error rate}
+      \code{misprediction}{ vector containing the classwise misprediction rates.}
       
-      \code{confusion}{ a confusion matrix.}
+      \code{confusion}{ the confusion matrix.}
 
-      \code{census}{ a matrix of predictions, by category.}
+      \code{census}{ matrix of predictions, by category.}
 
-      \code{prob}{ a matrix of prediction probabilities by category, if requested.}
+      \code{oobError}{ the out-of-bag error.}
+
+      \code{prob}{ matrix of prediction probabilities by category, if requested.}
     }
   }
 }

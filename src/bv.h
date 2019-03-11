@@ -20,25 +20,33 @@
 #include <vector>
 #include <algorithm>
 
+#include "typeparam.h"
 
-// TODO: Recast using templates.
+// TODO: Reparametrize with templates.
 
 class BV {
-  const unsigned int nSlot;
+  const unsigned int nSlot; // Number of typed (uint) slots.
   unsigned int *raw;
-  const bool wrapper;
+  const bool wrapper;  // True iff an overlay onto pre-allocated memory.
+  
  public:
   static const unsigned int full = 1;
   static const unsigned int eltSize = 1;
   static const unsigned int slotSize = sizeof(unsigned int);
   static constexpr unsigned int slotElts = 8 * slotSize;
 
-  BV(unsigned int len, bool slotWise = false);
-  BV(const std::vector<unsigned int> &_raw);
-  BV(unsigned int _raw[], size_t _nSlot);
-  BV(std::vector<unsigned int> &_raw, unsigned int _nSlot);
+  BV(size_t len, bool slotWise = false);
+  BV(const vector<unsigned int> &raw_);
+  BV(unsigned int raw_[], size_t nSlot_);
+  BV(vector<unsigned int> &raw_, unsigned int nSlot_);
 
   ~BV();
+
+  inline void Serialize(unsigned char *bbRaw) const {
+    for (size_t i = 0; i < nSlot * sizeof(unsigned int); i++) {
+      bbRaw[i] = *((unsigned char *) &raw[0] + i);
+    }
+  }
 
   /**
      @brief Accessor for position within the 'raw' buffer.
@@ -47,10 +55,22 @@ class BV {
     return raw + off;
   }
 
-  void Consume(std::vector<unsigned int> &out, unsigned int bitEnd = 0) const;
+  /**
+     @brief Appends contents onto output vector.
+
+     @param[out] out outputs the raw bit vector contents.
+
+     @param bitEnd specifies a known end position if positive, otherwise
+     indicates that a default value be used.
+
+     @return void, with output vector parameter.
+  */
+  void consume(vector<unsigned int> &out, unsigned int bitEnd = 0) const;
+
+  
   unsigned int PopCount() const;
 
-  BV *Resize(unsigned int bitMin);
+  BV *Resize(size_t bitMin);
 
   /**
      @brief Accessor for slot count.
@@ -77,14 +97,21 @@ class BV {
 
      @param len is the element count to align.
 
-     @return length of containing aligned quantity in units of buffer type.
+     @return length of containing aligned quantity in buffer units.
    */
-  static inline unsigned int SlotAlign(unsigned int len) {
+  static inline unsigned int SlotAlign(size_t len) {
     return (len + slotElts - 1) / slotElts;
   }
 
 
-  static inline unsigned int Stride(unsigned int len) {
+  static inline size_t strideBytes(size_t len) {
+    return SlotAlign(len) * sizeof(unsigned int);
+  }
+
+  /**
+     @return length of aligned row in bits.
+   */
+  static inline unsigned int Stride(size_t len) {
     return slotElts * SlotAlign(len);
   }
 
@@ -120,7 +147,7 @@ class BV {
 
      @return true iff bit position is set in the bit vector.
    */
-  inline bool TestBit(unsigned int pos) const {
+  inline bool testBit(unsigned int pos) const {
     unsigned int mask;
     unsigned int slot = SlotMask(pos, mask);
 
@@ -137,7 +164,7 @@ class BV {
 
      @return void.
    */
-  inline void SetBit(unsigned int pos, bool on = true) {
+  inline void setBit(unsigned int pos, bool on = true) {
     unsigned int mask;
     unsigned int slot = SlotMask(pos, mask);
     unsigned int val = raw[slot];
@@ -150,7 +177,7 @@ class BV {
   }
   
   
-  inline void SetSlot(unsigned int slot, unsigned int val) {
+  inline void setSlot(unsigned int slot, unsigned int val) {
     raw[slot] = val;
   }
 
@@ -163,40 +190,48 @@ class BV {
 };
 
 
-class BitRow : public BV {
- public:
- BitRow(unsigned int *_raw, unsigned int _nSlot) : BV(_raw, _nSlot) {}
-  ~BitRow() {
-  }
-};
-
-
 /**
    @brief Like a bit vector, but with row-major strided access.
 
  */
 class BitMatrix : public BV {
   const unsigned int nRow;
-  const unsigned int stride;
-  void Export(unsigned int _nRow, std::vector<std::vector<unsigned int> > &bmOut);
-  void ColExport(unsigned int _nRow, std::vector<unsigned int> &outCol, unsigned int colIdx);
+  const unsigned int stride; // Number of uint cells per row.
+  void dump(unsigned int _nRow, vector<vector<unsigned int> > &bmOut) const;
+  void colDump(unsigned int _nRow,
+               vector<unsigned int> &outCol,
+               unsigned int colIdx) const;
 
  public:
   BitMatrix(unsigned int _nRow, unsigned int _nCol);
-  BitMatrix(unsigned int _nRow, unsigned int _nCol, const std::vector<unsigned int> &_raw);
-  BitMatrix(std::vector<unsigned int> &_raw, unsigned int _nRow, unsigned int _nCol);
-  BitMatrix(unsigned int _raw[], size_t _nRow, size_t _nCol);
+  BitMatrix(unsigned int _nRow, unsigned int _nCol, const vector<unsigned int> &raw_);
+  BitMatrix(unsigned int raw_[], size_t _nRow, size_t _nCol);
   ~BitMatrix();
 
-  inline unsigned int NRow() const {
+  inline unsigned int getNRow() const {
     return nRow;
   }
+
+
+  inline size_t getStride() const {
+    return stride;
+  }
   
-  static void Export(const std::vector<unsigned int> &_raw, unsigned int _nRow, std::vector<std::vector<unsigned int> > &vecOut);
+
+  static void dump(const vector<unsigned int> &raw_,
+                   unsigned int _nRow,
+                   vector<vector<unsigned int> > &vecOut);
 
 
-  inline BitRow *Row(unsigned int row) {
-    return new BitRow(Raw((stride * row)/slotElts), stride);
+  /**
+     @brief Wraps a row section as a bit vector.
+
+     @param row is the row number being accessed.
+
+     @return wrapped bit vector.
+   */
+  inline shared_ptr<BV> BVRow(unsigned int row) {
+    return make_shared<BV>(Raw((row * stride) / slotElts), stride);
   }
 
 
@@ -205,18 +240,18 @@ class BitMatrix : public BV {
 
      @return whether bit at specified coordinate is set.
    */
-  inline bool TestBit(unsigned int row, unsigned int col) const {
-    return stride == 0 ? false : BV::TestBit(row * stride + col);
+  inline bool testBit(unsigned int row, unsigned int col) const {
+    return stride == 0 ? false : BV::testBit(row * stride + col);
   }
 
   
-  inline void SetBit(unsigned int row, unsigned int col, bool on = true) {
-    BV::SetBit(row * stride + col, on);
+  inline void setBit(unsigned int row, unsigned int col, bool on = true) {
+    BV::setBit(row * stride + col, on);
   }
 
 
-  inline void ClearBit(unsigned int row, unsigned int col) {
-    SetBit(row, col, false);
+  inline void clearBit(unsigned int row, unsigned int col) {
+    setBit(row, col, false);
   }
 };
 
@@ -225,21 +260,16 @@ class BitMatrix : public BV {
    @brief Jagged bit matrix:  unstrided access.
  */
 class BVJagged : public BV {
-  const size_t nElt;
-  const unsigned int *rowOrigin;
+  const unsigned int *rowExtent;
   const unsigned int nRow;
-  void Export(std::vector<std::vector<unsigned int> > &outVec);
-  void RowExport(std::vector<unsigned int> &outRow, unsigned int rowHeight, unsigned int rowIdx) const;
-  unsigned int RowHeight(unsigned int rowIdx) const;
+  vector<unsigned int> rowDump(unsigned int rowIdx) const;
+
  public:
-  BVJagged(unsigned int _raw[], size_t _nSlot, const unsigned int _origin[], unsigned int _nRow);
+  BVJagged(unsigned int raw_[],
+           const unsigned int height_[], // Cumulative extent per row.
+           unsigned int nRow_);
   ~BVJagged();
-  static void Export(unsigned int _raw[], std::size_t facLen, const unsigned int _origin[], unsigned int _nElt, std::vector<std::vector<unsigned int> > &outVec);
-
-
-  inline size_t NElt() const {
-    return nElt;
-  }
+  void dump(vector<vector<unsigned int> > &outVec);
 
 
   /**
@@ -252,10 +282,10 @@ class BVJagged : public BV {
      @return true iff bit set.
 
    */
-  inline bool TestBit(unsigned int row, unsigned int pos) const {
+  inline bool testBit(unsigned int row, unsigned int pos) const {
     unsigned int mask;
     unsigned int slot = SlotMask(pos, mask);
-    unsigned int base = rowOrigin[row];
+    unsigned int base = row == 0 ? 0 : rowExtent[row-1];
     
     return Test(base + slot, mask);
   }
@@ -273,7 +303,7 @@ class CharV {
   static constexpr unsigned int slotElts = slotSize / eltSize;
 
   CharV(unsigned int _nSlot);
-  CharV(unsigned int *_raw, unsigned int _nSlot);
+  CharV(unsigned int *raw_, unsigned int _nSlot);
   ~CharV();
 
   
@@ -304,7 +334,7 @@ class CharV {
 
      @param len is the element count to align.
 
-     @return length of containing quantity in units of buffer type..
+     @return number of buffer slots in aligned row.
    */
   static inline unsigned int SlotAlign(unsigned int len) {
     return (len + slotElts - 1) / slotElts;
@@ -325,13 +355,13 @@ class CharV {
 
 
   /**
-     @brief Sets slot at position to value passed.
+     @brief sets slot at position to value passed.
 
      @param pos is the position to set.
 
      @return void, with side-effected raw value.
    */
-  inline void Set(unsigned int pos, unsigned char val) {
+  inline void set(unsigned int pos, unsigned char val) {
     unsigned int slot = pos / slotElts;
     unsigned int slotPos = pos - (slot * slotElts);
     unsigned int shiftBits = slotPos * eltSize;
@@ -356,7 +386,7 @@ class CharV {
  */
 class CharRow : public CharV {
  public:
-  CharRow(unsigned int *_raw, unsigned int _nSlot) : CharV(_raw, _nSlot) {}
+  CharRow(unsigned int *raw_, unsigned int _nSlot) : CharV(raw_, _nSlot) {}
   ~CharRow() {}
 };
 

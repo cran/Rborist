@@ -13,241 +13,211 @@
    @author Mark Seligman
 */
 
+#include "bv.h"
 #include "sample.h"
 #include "train.h"
 #include "forest.h"
 #include "rowrank.h"
-#include "predblock.h"
+#include "framemap.h"
 #include "index.h"
 #include "pretree.h"
-#include "sample.h"
 #include "samplepred.h"
-#include "splitsig.h"
-#include "response.h"
-#include "splitpred.h"
+#include "splitnode.h"
+#include "splitcand.h"
 #include "leaf.h"
 #include "level.h"
+#include "ompthread.h"
 #include "coproc.h"
 
 #include <algorithm>
 
-// Testing only:
-//#include <iostream>
-//using namespace std;
 
 unsigned int Train::trainBlock = 0;
 
-/**
-   @brief Initializes immutable values for "top-level" classes directly,
-   for those instances in which static initialization seems to make
-   more sense.  These may, in turn, initialize subclasses or classes
-   with objects strictly local to them.
-
-   @param minNode is the minimal index node size on which to split.
-
-   @param minRatio is a threshold ratio for determining whether to split.
-
-   @param totLevels, if positive, limits the number of levels to build.
-
-   @return void.
-*/
-void Train::Init(unsigned int _nPred, unsigned int _nTree, unsigned int _nSamp, const std::vector<double> &_feSampleWeight, bool _withRepl, unsigned int _trainBlock, unsigned int _minNode, double _minRatio, unsigned int _totLevels, unsigned int _leafMax, unsigned int _ctgWidth, unsigned int _predFixed, const double _splitQuant[], const double _predProb[], bool _thinLeaves, const double _regMono[]) {
-  trainBlock = _trainBlock;
-  Sample::Immutables(_nSamp, _feSampleWeight, _withRepl);
-  SPNode::Immutables(_ctgWidth);
-  SplitSig::Immutables(_minRatio);
-  IndexLevel::Immutables(_minNode, _totLevels);
-  Leaf::Immutables(_thinLeaves);
-  PreTree::Immutables(_nSamp, _minNode, _leafMax);
-  Level::Immutables(_predFixed, _predProb);
-  ForestNode::Immutables(_splitQuant);
-  if (_regMono != nullptr) {
-    SPReg::Immutables(_nPred, _regMono);
-  }
+void Train::initBlock(unsigned int trainBlock_) {
+  trainBlock = trainBlock_;
 }
 
 
-/**
-   @brief Unsets immutables.
+void Train::initCDF(const vector<double> &feSplitQuant) {
+  TreeNode::Immutables(feSplitQuant);
+}
 
-   @return void.
-*/
-void Train::DeImmutables() {
+
+void Train::initProb(unsigned int predFixed,
+                     const vector<double> &predProb) {
+  Level::immutables(predFixed, predProb);
+}
+
+
+void Train::initTree(unsigned int nSamp,
+                     unsigned int minNode,
+                     unsigned int leafMax) {
+  PreTree::immutables(nSamp, minNode, leafMax);
+}
+
+
+void Train::initOmp(unsigned int nThread) {
+  OmpThread::init(nThread);
+}
+
+
+void Train::initSample(unsigned int nSamp) {
+  Sample::immutables(nSamp);
+}
+
+void Train::initSplit(unsigned int minNode,
+                      unsigned int totLevels,
+                      double minRatio) {
+  IndexLevel::immutables(minNode, totLevels);
+  SplitCand::immutables(minRatio);
+}
+
+
+void Train::initCtgWidth(unsigned int ctgWidth) {
+  SampleNux::immutables(ctgWidth);
+}
+
+
+void Train::initMono(const FrameTrain* frameTrain,
+                     const vector<double> &regMono) {
+  SPReg::Immutables(frameTrain, regMono);
+}
+
+
+void Train::deInit() {
   trainBlock = 0;
-  ForestNode::DeImmutables();
-  SplitSig::DeImmutables();
-  IndexLevel::DeImmutables();
-  Leaf::DeImmutables();
-  PreTree::DeImmutables();
-  Sample::DeImmutables();
-  SPNode::DeImmutables();
-  Level::DeImmutables();
+  TreeNode::DeImmutables();
+  SplitCand::deImmutables();
+  IndexLevel::deImmutables();
+  PreTree::deImmutables();
+  Sample::deImmutables();
+  SampleNux::deImmutables();
+  Level::deImmutables();
   SPReg::DeImmutables();
+  OmpThread::deInit();
 }
 
 
-/**
-   @brief Regression constructor.
- */
-Train::Train(const std::vector<double> &_y, const std::vector<unsigned int> &_row2Rank, std::vector<unsigned int> &_origin, std::vector<unsigned int> &_facOrigin, std::vector<double> &_predInfo, std::vector<class ForestNode> &_forestNode, std::vector<unsigned int> &_facSplit, std::vector<unsigned int> &_leafOrigin, std::vector<class LeafNode> &_leafNode, std::vector<class BagLeaf> &_bagRow, std::vector<unsigned int> &_bagBits, bool _enableCoproc, std::string &diag) : nTree(_origin.size()), forest(new ForestTrain(_forestNode, _origin, _facOrigin, _facSplit)), predInfo(_predInfo), response(Response::FactoryReg(_y, _row2Rank, _leafOrigin, _leafNode, _bagRow, _bagBits)), coproc(Coproc::Factory(_enableCoproc, diag)) {
+unique_ptr<Train> Train::regression(const FrameTrain *frameTrain,
+                                       const RankedSet *rankedPair,
+                                       const double *y,
+                                       unsigned int treeChunk) {
+  auto trainReg = make_unique<Train>(frameTrain, y, treeChunk);
+  trainReg->trainChunk(frameTrain, rankedPair);
+
+  return trainReg;
 }
 
 
-/**
-   @brief Static entry for regression training.
-
-   @param trainBlock is the maximum number of trees trainable simultaneously.
-
-   @param minNode is the mininal number of sample indices represented by a tree node.
-
-   @param minRatio is the minimum information ratio of a node to its parent.
-
-   @return forest height, with output reference parameter.
-*/
-void Train::Regression(const unsigned int _feRow[], const unsigned int _feRank[], const unsigned int _numOff[], const double _numVal[], const unsigned int _feRLE[], unsigned int _feRLELength, const std::vector<double> &_y, const std::vector<unsigned int> &_row2Rank, std::vector<unsigned int> &_origin, std::vector<unsigned int> &_facOrigin, std::vector<double> &_predInfo, const std::vector<unsigned int> &_feCard, std::vector<class ForestNode> &_forestNode, std::vector<unsigned int> &_facSplit, std::vector<unsigned int> &_leafOrigin, std::vector<class LeafNode> &_leafNode, double _autoCompress, std::vector<class BagLeaf> &_bagRow, std::vector<unsigned int> &_bagBits, bool _enableCoproc, std::string &diag) {
-  PMTrain *pmTrain = new PMTrain(_feCard, _predInfo.size(), _y.size());
-  Train *train = new Train(_y, _row2Rank, _origin, _facOrigin, _predInfo, _forestNode, _facSplit, _leafOrigin, _leafNode, _bagRow, _bagBits, _enableCoproc, diag);
-
-  RowRank *rowRank = new RowRank(pmTrain, _feRow, _feRank, _numOff, _numVal, _feRLE, _feRLELength, _autoCompress);
-  train->TrainForest(pmTrain, rowRank);
-
-  delete rowRank;
-  delete train;
-  delete pmTrain;
-  DeImmutables();
+Train::Train(const FrameTrain *frameTrain,
+             const double *y,
+             unsigned int treeChunk_) :
+  nRow(frameTrain->getNRow()),
+  treeChunk(treeChunk_),
+  bagRow(make_unique<BitMatrix>(treeChunk, nRow)),
+  forest(make_unique<ForestTrain>(treeChunk)),
+  predInfo(vector<double>(frameTrain->getNPred())),
+  leaf(LFTrain::factoryReg(y, treeChunk)) {
 }
 
 
-/**
-   @brief Classification constructor.
- */
-Train::Train(const std::vector<unsigned int> &_yCtg, unsigned int _ctgWidth, const std::vector<double> &_yProxy, std::vector<unsigned int> &_origin, std::vector<unsigned int> &_facOrigin, std::vector<double> &_predInfo, std::vector<ForestNode> &_forestNode, std::vector<unsigned int> &_facSplit, std::vector<unsigned int> &_leafOrigin, std::vector<LeafNode> &_leafNode, std::vector<BagLeaf> &_bagRow, std::vector<unsigned int> &_bagBits, std::vector<double> &_weight, bool _enableCoproc, std::string &diag) : nTree(_origin.size()), forest(new ForestTrain(_forestNode, _origin, _facOrigin, _facSplit)), predInfo(_predInfo), response(Response::FactoryCtg(_yCtg, _yProxy, _leafOrigin, _leafNode, _bagRow, _bagBits, _weight, _ctgWidth)), coproc(Coproc::Factory(_enableCoproc, diag)) {
+unique_ptr<Train> Train::classification(const FrameTrain *frameTrain,
+                                        const RankedSet *rankedPair,
+                                        const unsigned int *yCtg,
+                                        const double *yProxy,
+                                        unsigned int nCtg,
+                                        unsigned int treeChunk,
+                                        unsigned int nTree) {
+  auto trainCtg = make_unique<Train>(frameTrain, yCtg, nCtg, yProxy, nTree, treeChunk);
+  trainCtg->trainChunk(frameTrain, rankedPair);
+
+  return trainCtg;
 }
 
 
-/**
-   @brief Static entry for regression training.
-
-   @return void.
-*/
-void Train::Classification(const unsigned int _feRow[], const unsigned int _feRank[], const unsigned int _numOff[], const double _numVal[], const unsigned int _feRLE[], unsigned int _rleLength, const std::vector<unsigned int>  &_yCtg, unsigned int _ctgWidth, const std::vector<double> &_yProxy, std::vector<unsigned int> &_origin, std::vector<unsigned int> &_facOrigin, std::vector<double> &_predInfo, const std::vector<unsigned int> &_feCard, std::vector<class ForestNode> &_forestNode, std::vector<unsigned int> &_facSplit, std::vector<unsigned int> &_leafOrigin, std::vector<class LeafNode> &_leafNode, double _autoCompress, std::vector<class BagLeaf> &_bagRow, std::vector<unsigned int> &_bagBits, std::vector<double> &_weight, bool _enableCoproc, std::string &diag) {
-  PMTrain *pmTrain = new PMTrain(_feCard, _predInfo.size(), _yCtg.size());
-
-  Train *train = new Train(_yCtg, _ctgWidth, _yProxy, _origin, _facOrigin, _predInfo, _forestNode, _facSplit, _leafOrigin, _leafNode, _bagRow, _bagBits, _weight, _enableCoproc, diag);
-
-  RowRank *rowRank = new RowRank(pmTrain, _feRow, _feRank, _numOff, _numVal, _feRLE, _rleLength, _autoCompress);
-  train->TrainForest(pmTrain, rowRank);
-
-  delete rowRank;
-  delete train;
-  delete pmTrain;
-  DeImmutables();
+Train::Train(const FrameTrain *frameTrain,
+             const unsigned int *yCtg,
+             unsigned int nCtg,
+             const double *yProxy,
+             unsigned int nTree,
+             unsigned int treeChunk_) :
+  nRow(frameTrain->getNRow()),
+  treeChunk(treeChunk_),
+  bagRow(make_unique<BitMatrix>(treeChunk, nRow)),
+  forest(make_unique<ForestTrain>(treeChunk)),
+  predInfo(vector<double>(frameTrain->getNPred())),
+  leaf(LFTrain::factoryCtg(yCtg, yProxy, treeChunk, nRow, nCtg, nTree)) {
 }
 
 
 Train::~Train() {
-  delete response;
-  delete forest;
-  delete coproc;
 }
 
 
-/**
-  @brief Trains the requisite number of trees.
-
-  @param trainBlock is the maximum Count of trees to train en block.
-
-  @return void.
-*/
-void Train::TrainForest(const PMTrain *pmTrain, const RowRank *rowRank) {
-  for (unsigned treeStart = 0; treeStart < nTree; treeStart += trainBlock) {
-    unsigned int treeEnd = std::min(treeStart + trainBlock, nTree); // one beyond.
-    TreeBlock(pmTrain, rowRank, treeStart, treeEnd - treeStart);
+void Train::trainChunk(const FrameTrain *frameTrain,
+                       const RankedSet *rankedPair) {
+  for (unsigned treeStart = 0; treeStart < treeChunk; treeStart += trainBlock) {
+    unsigned int treeEnd = min(treeStart + trainBlock, treeChunk); // one beyond.
+    auto treeBlock = blockProduce(frameTrain, rankedPair->getRowRank(), treeStart, treeEnd - treeStart);
+    blockConsume(treeBlock, treeStart);
   }
-    
-  // Normalizes 'predInfo' to per-tree means.
-  double recipNTree = 1.0 / nTree;
-  for (unsigned int i = 0; i < predInfo.size(); i++) {
-    predInfo[i] *= recipNTree;
-  }
-
-  forest->SplitUpdate(pmTrain, rowRank);
+  forest->splitUpdate(frameTrain, rankedPair->getNumRanked());
 }
 
 
-/**
-   @brief  Creates a block of root samples and trains each one.
-
-   @return void.
- */
-void Train::TreeBlock(const PMTrain *pmTrain, const RowRank *rowRank, unsigned int tStart, unsigned int tCount) {
-  std::vector<Sample*> sampleBlock(tCount);
-  response->TreeBlock(rowRank, sampleBlock);
-
-  std::vector<PreTree*> ptBlock(tCount);
-  IndexLevel::TreeBlock(pmTrain, rowRank, sampleBlock, coproc, ptBlock);
+vector<TrainSet> Train::blockProduce(const FrameTrain *frameTrain,
+                                     const RowRank *rowRank,
+                                     unsigned int tStart,
+                                     unsigned int tCount) {
+  unsigned int tIdx = tStart;
+  vector<TrainSet> block(tCount);
+  for (auto & set : block) {
+    auto sample = leaf->rootSample(rowRank, bagRow.get(), tIdx++);
+    auto preTree = IndexLevel::oneTree(frameTrain, rowRank, sample.get());
+    set = make_pair(sample, preTree);
+  }
 
   if (tStart == 0)
-    Reserve(ptBlock);
-  BlockConsume(pmTrain, sampleBlock, ptBlock, tStart);
+    reserve(block);
+
+  return move(block);
 }
 
  
-/** 
-  @brief Estimates forest heights using size parameters from the first
-  trained block of trees.
-
-  @param ptBlock is a block of PreTree references.
-
-  @return void.
-*/
-void Train::Reserve(std::vector<PreTree*> &ptBlock) {
-  unsigned int blockFac, blockBag, blockLeaf;
-  unsigned int maxHeight = 0;
-  unsigned int blockHeight = BlockPeek(ptBlock, blockFac, blockBag, blockLeaf, maxHeight);
-  PreTree::Reserve(maxHeight);
-
-  double slop = (slopFactor * nTree) / trainBlock;
-  forest->Reserve(blockHeight, blockFac, slop);
-  response->LeafReserve(slop * blockLeaf, slop * blockBag);
+void Train::reserve(vector<TrainSet> &treeBlock) {
+  size_t blockFac, blockBag, blockLeaf;
+  size_t maxHeight = 0;
+  (void) blockPeek(treeBlock, blockFac, blockBag, blockLeaf, maxHeight);
+  PreTree::reserve(maxHeight);
 }
 
 
-/**
-   @brief Accumulates block size parameters as clues to forest-wide sizes.
-   Estimates improve with larger blocks, at the cost of higher memory footprint.
-
-   @return sum of tree sizes over block, plus output parameters.
- */
-unsigned int Train::BlockPeek(std::vector<PreTree*> &ptBlock, unsigned int &blockFac, unsigned int &blockBag, unsigned int &blockLeaf, unsigned int &maxHeight) {
-  unsigned int blockHeight = 0;
+unsigned int Train::blockPeek(vector<TrainSet> &treeBlock,
+                              size_t &blockFac,
+                              size_t &blockBag,
+                              size_t &blockLeaf,
+                              size_t &maxHeight) {
+  size_t blockHeight = 0;
   blockLeaf = blockFac = blockBag = 0;
-  for (auto & pt : ptBlock) {
-    pt->BlockBump(blockHeight, maxHeight, blockFac, blockLeaf, blockBag);
+  for (auto & set : treeBlock) {
+    get<1>(set)->blockBump(blockHeight, maxHeight, blockFac, blockLeaf, blockBag);
   }
 
   return blockHeight;
 }
 
  
-/**
-   @brief Builds segment of decision forest for a block of trees.
-
-   @param ptBlock is a vector of PreTree objects.
-
-   @param blockStart is the starting tree index for the block.
-
-   @return void, with side-effected forest.
-*/
-void Train::BlockConsume(const PMTrain *pmTrain, const std::vector<Sample*> &sampleBlock, std::vector<PreTree*> &ptBlock, unsigned int blockStart) {
-  unsigned int blockIdx = 0;
-  for (auto & pt : ptBlock) {
-    const std::vector<unsigned int> leafMap = pt->Consume(forest, blockStart + blockIdx, predInfo);
-    delete pt;
-    response->Leaves(pmTrain, sampleBlock[blockIdx], leafMap, blockStart + blockIdx);
-    delete sampleBlock[blockIdx];
-    blockIdx++;
+void Train::blockConsume(vector<TrainSet> &treeBlock,
+                         unsigned int blockStart) {
+  unsigned int blockIdx = blockStart;
+  for (auto & trainSet : treeBlock) {
+    const vector<unsigned int> leafMap = get<1>(trainSet)->consume(forest.get(), blockIdx, predInfo);
+    leaf->blockLeaves(get<0>(trainSet).get(), leafMap, blockIdx++);
   }
 }
 
 
+void Train::cacheBagRaw(unsigned char *bbRaw) const {
+  bagRow->Serialize(bbRaw);
+}
