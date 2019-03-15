@@ -1,4 +1,4 @@
-6161b35d000d21c5f2883e44af8d02b7 *DESCRIPTION
+ffd7654e8d4b80a50161ae16f42f9fbe *DESCRIPTION
 aeed2599b93947d261d7cedbf7fb37bd *LICENSE
 01b1c67de43d4b1db960575be9056f1a *NAMESPACE
 1522ed588fcbb7f0eda9e4fa240a9c82 *R/ForestFloorExport.Rborist.R
@@ -7,7 +7,7 @@ c37842b0f5bc3070b07784f13905b933 *R/PreFormat.R
 f882db1e0787926faad82706736110e2 *R/PreTrain.R
 a8effd3ef86f2645f22c3473d8a69798 *R/PreTrain.default.R
 769c932b76157d5b993ca54fb41420a3 *R/Rborist.R
-eb6ad9e7ed201bee3797c1883a34d716 *R/Rborist.default.R
+f55305c55a4095bac9db96fdb079263c *R/Rborist.default.R
 9664721baa058017d83e438bc5cc18bb *R/RboristNews.R
 fe7c2fec0a8c22c19e64660d9d3e6383 *R/Streamline.R
 19fbed5427b332868647322a6bb23d4b *R/Streamline.default.R
@@ -73,7 +73,7 @@ b7fb9da38927c8ea8d1b374a035136b3 *src/ompthread.cc
 8dce4916b40a7154b44f207a0eacaae8 *src/predict.h
 8ffccfcce46b60e80a59ded26176a794 *src/predictBridge.cc
 d9a38ba71236f04254b7fc334ff8ed55 *src/predictBridge.h
-77454b6c7c816b37933217c1c31a1214 *src/pretree.cc
+d8cffaec74c8cc4b8f1c070b0f742156 *src/pretree.cc
 d9efd8eee68e45b2c8ce1dd5c557f24f *src/pretree.h
 e296a2bfa300aa0983b2a44e71351239 *src/quant.cc
 e2b2695bba09f61b1f79816857e54f83 *src/quant.h
