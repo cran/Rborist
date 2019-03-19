@@ -1,4 +1,4 @@
-ffd7654e8d4b80a50161ae16f42f9fbe *DESCRIPTION
+2c4345e21a8cc1c69f6a1ec5b9debf9c *DESCRIPTION
 aeed2599b93947d261d7cedbf7fb37bd *LICENSE
 01b1c67de43d4b1db960575be9056f1a *NAMESPACE
 1522ed588fcbb7f0eda9e4fa240a9c82 *R/ForestFloorExport.Rborist.R
@@ -7,7 +7,7 @@ c37842b0f5bc3070b07784f13905b933 *R/PreFormat.R
 f882db1e0787926faad82706736110e2 *R/PreTrain.R
 a8effd3ef86f2645f22c3473d8a69798 *R/PreTrain.default.R
 769c932b76157d5b993ca54fb41420a3 *R/Rborist.R
-f55305c55a4095bac9db96fdb079263c *R/Rborist.default.R
+96c10a11ab304390be037938855afa36 *R/Rborist.default.R
 9664721baa058017d83e438bc5cc18bb *R/RboristNews.R
 fe7c2fec0a8c22c19e64660d9d3e6383 *R/Streamline.R
 19fbed5427b332868647322a6bb23d4b *R/Streamline.default.R
@@ -39,7 +39,7 @@ d6aa9c7398050cf1e36fd368a68f787b *man/Rborist.Rd
 163f31a320455a96f836470ca0b5f0bd *src/bottom.cc
 ebd30b44ab3a81c711f115015a278a9e *src/bottom.h
 51665a45e1847d1cdf74c5cd50e6634b *src/bv.cc
-372db870acc985b8809a6395ecac0c5b *src/bv.h
+081c2603ceefd0ffa4b6e063779f3c35 *src/bv.h
 feb41e7739421787fe1643751a4815fe *src/callback.cc
 474b2d2ea8ad058554a206aa559b1d21 *src/callback.h
 1b1420ba6994af9795027c5d7883bb7c *src/coproc.cc
@@ -64,13 +64,13 @@ b44cf25d6c199d5f513c0dad25c833b5 *src/index.cc
 e7de9c4429c813b08bff1e10175c8ad9 *src/leafBridge.cc
 fcb7634f47d688be8b4a978a2958a79e *src/leafBridge.h
 af92783eec44cba8b370a5048dab990a *src/level.cc
-49b1eeb2b5669fe7bdcca04c4f14195d *src/level.h
-b7fb9da38927c8ea8d1b374a035136b3 *src/ompthread.cc
-535d2b69059662f52f8110ebaaeec6c1 *src/ompthread.h
+c560d4515753802836480cff4e9db815 *src/level.h
+b0e2269e0728160104d4cbf2ec50a03b *src/ompthread.cc
+a8a6509f0e7782da9c2abaecacd1719c *src/ompthread.h
 934e0d4628e200307f766fc43c69902b *src/path.cc
 5a2ed8a28b6b245a5aa5f14826e915ce *src/path.h
 5f3d6fb3650279a469f64e85da8db05f *src/predict.cc
-8dce4916b40a7154b44f207a0eacaae8 *src/predict.h
+2a21cb42042ef751a4cf2c1d244b6270 *src/predict.h
 8ffccfcce46b60e80a59ded26176a794 *src/predictBridge.cc
 d9a38ba71236f04254b7fc334ff8ed55 *src/predictBridge.h
 d8cffaec74c8cc4b8f1c070b0f742156 *src/pretree.cc
@@ -86,9 +86,9 @@ ec1199491bf4d25b2fa4ccaf5f3cda72 *src/rowSample.h
 ce666a0ca41a77d4f76ea5f62316dcf7 *src/rowrank.cc
 57505c41336f19a24bea8a7a12f40e09 *src/rowrank.h
 dee9c3ec1b4c71d12f9c5118490d0090 *src/runset.cc
-3062f23f684c1a4c061faa0491fac3c6 *src/runset.h
+2ceb1e48a12e4e9bb64c0d5503d169b3 *src/runset.h
 1042d03a923cebafb6ed35288c86cb39 *src/sample.cc
-93843beebf7b6d3acbaac6be903954fd *src/sample.h
+5e1b1fbd339f424edd59497f5501a2a2 *src/sample.h
 cb57083eece01243ea5e287587d0cf86 *src/samplenux.cc
 cc556739a80057c3232699f9779c9050 *src/samplenux.h
 fa3827cd14faf0ad4b82b2b160023adb *src/samplepred.cc
@@ -100,7 +100,7 @@ fa3827cd14faf0ad4b82b2b160023adb *src/samplepred.cc
 d4b2203872cb5bb96073ad521a37404b *src/train.cc
 7a3c5ce63c4d31af045584c849222e7d *src/train.h
 23027fac956b71a866563a0a11087532 *src/trainBridge.cc
-b9e3803f35756e17deb99fdbe06a942b *src/trainBridge.h
+0aca14abb01b8c372ecf1a6a7dc31b04 *src/trainBridge.h
 255cd9578f9cfd06fb61b6faf5bedde6 *src/typeparam.h
 6325383890db494c6428d4da1339b0ab *tests/testthat.R
 6b4af13c6530d156c6ca07ccc777e49f *tests/testthat/test-regNum.R
