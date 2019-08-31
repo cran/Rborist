@@ -14,98 +14,93 @@
 
  */
 
-#ifndef ARBORIST_QUANT_H
-#define ARBORIST_QUANT_H
-
-#include <vector>
+#ifndef RF_QUANT_H
+#define RF_QUANT_H
 
 #include "typeparam.h"
+#include "valrank.h"
 
-/**
-   @brief Value and row of ranked response.
- */
-struct ValRow {
-  double val;
-  unsigned int row;
-
-  void init(double val, unsigned int row) {
-    this->val = val;
-    this->row = row;
-  }
-};
-
-/**
-   @brief Rank and sample-count values derived from BagSample.  Client:
-   quantile inference.
- */
-struct RankCount {
-  unsigned int rank;
-  unsigned int sCount;
-
-  void init(unsigned int rank, unsigned int sCount) {
-    this->rank = rank;
-    this->sCount = sCount;
-  }
-};
+#include <vector>
 
 
 /**
  @brief Quantile signature.
 */
 class Quant {
+  static const unsigned int binSize; // # slots to track.
   const class LeafFrameReg *leafReg; // Summary of trained terminal nodes.
   const class BitMatrix* baggedRows; // In-bag summary.
-  const double *yTrain; // Training response.
-  vector<ValRow> yRanked; // ordered version of yTrain, with ranks.
-  const double* quantile; // quantile values over which to predict.
-  const unsigned int qCount; // # quantile values, above.
-  vector<double> qPred; // predicted quantiles
-  vector<RankCount> rankCount; // forest-wide, by sample.
-  unsigned int logSmudge; // log2 of smudging factor, if smudging.
-  unsigned int binSize; // Width of binning parameter.
-  vector<unsigned int> binTemp; // Helper vector.
-  vector<unsigned int> sCountSmudge; // Smudged sample counts.
+  ValRank<double> valRank;
+  const vector<struct RankCount> rankCount; // forest-wide, by sample.
+  const vector<double> quantile; // quantile values over which to predict.
+  const unsigned int qCount; // caches quantile size for quick reference.
+  vector<double> qPred; // predicted quantiles.
+  vector<double> qEst; // quantile of response estimates.
+  unsigned int rankScale; // log2 of scaling factor.
+  const vector<double> binMean;
 
   /**
-     @brief Computes the count and rank of every bagged sample in the forest.
+     @brief Computes a bin offset for a given rank.
 
-     @param baggedRows encodes whether a tree/row pair is bagged.
+     @param rank is the rank in question.
 
-     @return void, with side-effected rankCount vector.
-  */
-  void rankCounts(const class BitMatrix *baggedRows);
+     @return bin offset.
+   */
+  inline unsigned int binRank(unsigned int rank) const {
+    return rank >> rankScale;
+  }
+
+
+  /**
+     @brief Determines scaling factor for training response.
+
+     @return power-of-two divisor for training response length.
+   */
+  unsigned int binScale() const;
+
+
+  /**
+     @brief Bins response means.
+
+     @param valRank contains the ranked response/row pairs.
+
+     @param rankScale is the bin scaling factor.
+
+     @return binned vector of response means.
+   */
+  vector<double> binMeans(const ValRank<double>& valRank,
+                          unsigned int rankScale);
+
   
-
-  /**
-     @brief Computes bin size and smudging factor.
-
-     @param nRow is the number of rows used to train.
-
-     @param qBin is the bin size specified by the front end.
-
-     @param[out] logSmudge outputs the log2 of the smudging factor.
-
-     @return bin size.
-  */
-  unsigned int imputeBinSize(unsigned int nRow,
-                             unsigned int qBin,
-                             unsigned int &_logSmudge);
-  /**
-   @brief Builds a vector of binned sample counts for wide leaves.
- */
-  void smudgeLeaves();
-
   /**
      @brief Writes the quantile values for a given row.
 
      @param rowBlock is the block-relative row index.
 
-     @param qRow[] outputs the 'qCount' quantile values.
+     @param[out] qRow[] outputs the 'qCount' quantile values.
   */
-  void predictRow(const class Predict *predict,
+  void predictRow(const class PredictFrame* frame,
                   unsigned int rowBlock,
-                  double qRow[]);
+                  double yPred,
+                  double qRow[],
+                  double* qEst);
 
+
+  /**
+     @brief Writes quantile values for a row of predictions.
+
+     @param sCount is a bin of ranked sample counts.
+
+     @param threshold is the sample count threshold for a given quantile.
+
+     @param yPred is the predicted response for the current row.
+
+     @param[out] qRow[] outputs the derived quantiles.
+   */
+  IndexT quantSamples(const vector<PredictorT>& sCount,
+                      const vector<double> threshold,
+                      double yPred,
+                      double qRow[]) const;
 
   /**
      @brief Accumulates the ranks assocated with predicted leaf.
@@ -114,41 +109,24 @@ class Quant {
 
      @param leafIdx is a tree-relative leaf index.
 
-     @param[in,out] sampRanks counts the number of samples at a given rank.
+     @param[in,out] sCount counts the number of samples at a (binned) rank.
 
      @return count of samples subsumed by leaf.
   */
-  unsigned int ranksExact(unsigned int tIdx,
-                          unsigned int leafIdx,
-                          vector<unsigned int> &sampRanks);
+  IndexT leafSample(unsigned int tIdx,
+                    IndexT leafIdx,
+                    vector<unsigned int> &sampRanks) const;
 
 
-  /**
-     @brief Accumulates binned ranks assocated with a predicted leaf.
-
-     @param tIdx is a tree index.
-
-     @param leafIdx is the tree-relative leaf index.
-
-     @param sampRanks[in,out] counts the number of samples at a given rank.
-     
-     @return count of samples subsumed by leaf.
- */
-  unsigned int ranksSmudge(unsigned int tIdx,
-                           unsigned int LeafIdx,
-                           vector<unsigned int> &sampRanks);
-
-  
  public:
   /**
      @brief Constructor for invocation from within core.
 
      Parameters mirror simililarly-named members.
    */
-  Quant(const struct PredictBox* box,
-        const double* quantile_,
-        unsigned int qCount_,
-        unsigned int qBin);
+  Quant(const class LeafFrameReg* leaf,
+        const class Bag* bag,
+        const vector<double>& quantile_);
 
   /**
      @brief Getter for number of quantiles.
@@ -163,20 +141,28 @@ class Quant {
   /**
      @brief Getter for number of rows predicted.
 
-     Returns zero if empty bag precludes yRanked from initialization.
+     Returns zero if empty bag precludes valRank from initialization.
    */
-  unsigned int getNRow() const {
-    return yRanked.size();
-  }
+  unsigned int getNRow() const;
 
   
   /**
      @brief Accessor for predicted quantiles.
 
-     @return pointer to base of quantile predictions.
+     @return vector of quantile predictions.
    */
-  const double *QPred() const {
-    return &qPred[0];
+  const vector<double> getQPred() const {
+    return qPred;
+  }
+  
+  
+  /**
+     @brief Accessor for estimand quantiles.
+
+     @return pointer to base of estimand quantiles.
+   */
+  const vector<double> getQEst() const {
+    return qEst;
   }
   
   
@@ -185,11 +171,11 @@ class Quant {
 
      @param rowStart is the first row at which to predict.
 
-     @param rowEnd is first row at which not to predict.
+     @param extent is the number of rows to predict.
   */
-  void predictAcross(const class Predict *predict,
-                     unsigned int rowStart,
-                     unsigned int rowEnd);
+  void predictAcross(const class PredictFrame* frame,
+                     size_t rowStart,
+                     size_t extent);
 };
 
 #endif

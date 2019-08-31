@@ -1,4 +1,4 @@
-// This file is part of ArboristCore.
+// This file is part of framemap.
 
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
@@ -8,7 +8,7 @@
 /**
    @file framemap.h
 
-   @brief Class definitions for maintenance of type-based data blocks.
+   @brief Data frame representations built from type-parametrized blocks.
 
    @author Mark Seligman
  */
@@ -17,33 +17,41 @@
 #define ARBORIST_FRAMEMAP_H
 
 #include <vector>
+#include <algorithm> // max()
+using namespace std;
 
-#include "typeparam.h"
 
 /**
-   @brief Singleton subclass instances:  training or prediction.
+   @brief Summarizes frame contents by predictor type.
  */
 class FrameMap {
- protected:
   unsigned int nRow;
-  unsigned int nPredNum;
+  const vector<unsigned int> &feCard; // Factor predictor cardinalities.
   unsigned int nPredFac;
+  unsigned int nPredNum;
+
+  // Greatest cardinality extent, irrespective of gaps.  Useful for packing.
+  const unsigned int cardExtent;
+
  public:
 
- FrameMap(unsigned int _nRow,
-	  unsigned int _nPredNum,
-	  unsigned int _nPredFac) :
-  nRow(_nRow),
-    nPredNum(_nPredNum),
-    nPredFac(_nPredFac) {
+  FrameMap(const vector<unsigned int> &feCard_,
+           unsigned int nPred,
+           unsigned int nRow_) :
+    nRow(nRow_),
+    feCard(feCard_),
+    nPredFac(feCard.size()),
+    nPredNum(nPred - feCard.size()),
+    cardExtent(nPredFac > 0 ? *max_element(feCard.begin(), feCard.end()) : 0) {
   }
+
   
   /**
      @brief Assumes numerical predictors packed in front of factor-valued.
 
      @return Position of fist factor-valued predictor.
   */
-  inline unsigned int FacFirst() const {
+  inline unsigned int getFacFirst() const {
     return nPredNum;
   }
 
@@ -56,35 +64,20 @@ class FrameMap {
      @return true iff index references a factor.
    */
   inline bool isFactor(unsigned int predIdx)  const {
-    return predIdx >= FacFirst();
+    return predIdx >= getFacFirst();
   }
 
 
   /**
      @brief Computes block-relative position for a predictor.
-   */
-  inline unsigned int FacIdx(int predIdx, bool &thisIsFactor) const{
+
+     @param[out] thisIsFactor outputs true iff predictor is factor-valued.
+
+     @return block-relative index.
+  */
+  inline unsigned int getIdx(unsigned int predIdx, bool &thisIsFactor) const{
     thisIsFactor = isFactor(predIdx);
-    return thisIsFactor ? predIdx - FacFirst() : predIdx;
-  }
-
-
-  /**
-     @brief Determines a dense position for factor-valued predictors.
-
-     @param predIdx is a predictor index.
-
-     @param nStride is a stride value.
-
-     @param[out] thisIsFactor is true iff predictor is factor-valued.
-
-     @return strided factor offset, if factor, else predictor index.
-   */
-  inline unsigned int getFacStride(unsigned int predIdx,
-				unsigned int nStride,
-				bool &thisIsFactor) const {
-    unsigned int facIdx = FacIdx(predIdx, thisIsFactor);
-    return thisIsFactor ? nStride * nPredFac + facIdx : predIdx;
+    return thisIsFactor ? predIdx - getFacFirst() : predIdx;
   }
 
 
@@ -122,8 +115,8 @@ class FrameMap {
 
      @return Position of first numerical predictor.
   */
-  inline unsigned int NumFirst() const {
-    return 0;
+  static unsigned int constexpr getNumFirst() {
+    return 0ul;
   }
 
 
@@ -133,102 +126,31 @@ class FrameMap {
      @param predIdx is the core-ordered index of a predictor assumed to be numeric.
 
      @return Position of predictor within numerical block.
-   */
-  inline unsigned int getNumIdx(int predIdx) const {
-    return predIdx - NumFirst();
+  */
+  inline unsigned int getNumIdx(unsigned int predIdx) const {
+    return predIdx - getNumFirst();
   }
 
 
   /**
-     @brief Assumes numerical predictors packed ahead of factor-valued.
+     @brief Computes cardinality of factor-valued predictor, or zero if not a
+     factor.
 
-     @return Position of last numerical predictor.
+     @param predIdx is the internal predictor index.
+
+     @return factor cardinality or zero.
   */
-  inline unsigned int NumSup() const {
-    return nPredNum;
+  inline auto getFacCard(unsigned int predIdx) const {
+    return isFactor(predIdx) ? feCard[predIdx - getFacFirst()] : 0;
   }
 
   
   /**
-     @brief Same assumptions about predictor ordering.
-
-     @return Position of last factor-valued predictor.
+     @brief Accessor for greatest cardinality extent.
   */
-  inline unsigned int FacSup() const {
-    return nPredNum + nPredFac;
+  inline auto getCardExtent() const {
+    return cardExtent;
   }
-};
-
-
-/**
-   @brief Training caches numerical predictors for evaluating splits.
- */
-class FrameTrain : public FrameMap {
-  const vector<unsigned int> &feCard; // Factor predictor cardinalities.
-  const unsigned int cardMax;  // High watermark of factor cardinalities.
-
- public:
-  FrameTrain(const vector<unsigned int> &_feCard,
-	  unsigned int _nPred,
-	  unsigned int _nRow);
-
-
-  /**
-   @brief Computes cardinality of factor-valued predictor, or zero if not a
-   factor.
-
-   @param predIdx is the internal predictor index.
-
-   @return factor cardinality or zero.
-  */
-  inline int getFacCard(int predIdx) const {
-    return isFactor(predIdx) ? feCard[predIdx - FacFirst()] : 0;
-  }
-
-  
-  /**
-     @brief Maximal predictor cardinality.  Useful for packing.
-
-     @return highest cardinality, if any, among factor predictors.
-   */
-  inline unsigned int getCardMax() const {
-    return cardMax;
-  }
-};
-
-
-class FramePredict : public FrameMap {
-  class BlockNum *blockNum;
-  class BlockFac *blockFac;
-
- public:
-
-  FramePredict(class BlockNum *_blockNum,
-	       class BlockFac *_blockFac,
-	    unsigned int _nRow);
-  ~FramePredict();
-
-
-  /**
-     @brief Transposes each block of rows in the frame.
-
-     @param rowStart is the beginning row.
-
-     @param rowEnd is the final row.
-   */
-  void transpose(unsigned int rowStart,
-                 unsigned int rowEnd) const;
-
-  /**
-     @return base address for (transposed) numeric values at row.
-   */
-  const double *baseNum(unsigned int rowOff) const;
-
-  /**
-     @return base address for (transposed) factor values at row.
-   */
-  const unsigned int *baseFac(unsigned int rowOff) const;
-
 };
 
 #endif

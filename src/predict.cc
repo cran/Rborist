@@ -13,7 +13,8 @@
    @author Mark Seligman
  */
 
-#include "framemap.h"
+#include "bag.h"
+#include "block.h"
 #include "forest.h"
 #include "leaf.h"
 #include "predict.h"
@@ -22,164 +23,161 @@
 #include "ompthread.h"
 
 
-PredictBox::PredictBox(bool oob_,
-                       const FramePredict* framePredict_,
-                       const Forest* forest_,
-                       const BitMatrix* bag_,
-                       LeafFrame* leafFrame_,
-                       unsigned int nThread) :
-  oob(oob_),
-  framePredict(framePredict_),
-  forest(forest_),
+Predict::Predict(const Bag* bag_,
+                 const Forest* forest,
+                 LeafFrame* leaf_,
+                 Quant* quant_,
+                 bool oob_) :
   bag(bag_),
-  leafFrame(leafFrame_) {
-  OmpThread::init(nThread);
-}
-
-PredictBox::~PredictBox() {
-  OmpThread::deInit();
-}
-
-
-Predict::Predict(const PredictBox* box) :
-  framePredict(box->framePredict),
-  forest(box->forest),
-  nTree(forest->getNTree()),
-  nRow(framePredict->getNRow()),
   treeOrigin(forest->cacheOrigin()),
-  leaf(box->leafFrame),
-  noLeaf(leaf->getNoLeaf()),
-  bag(box->bag),
-  oob(box->oob) {
-  predictLeaves = make_unique<unsigned int[]>(rowBlock * nTree);
+  treeNode(forest->getNode()),
+  facSplit(forest->getFacSplit()),
+  leaf(leaf_),
+  quant(quant_), 
+  oob(oob_),
+  nTree(forest->getNTree()),
+  noLeaf(leaf->getNoLeaf()) {
 }
 
 
-void Predict::predict(const PredictBox* box, Quant* quant) {
-  auto predict = make_unique<Predict>(box);
-  predict->predictAcross(quant);
+PredictFrame::PredictFrame(Predict* predict_,
+                           const BlockDense<double>* blockNum_,
+                           const BlockDense<unsigned int>* blockFac_) :
+  predict(predict_),
+  nTree(predict->nTree),
+  noLeaf(predict->noLeaf),
+  blockNum(blockNum_),
+  blockFac(blockFac_),
+  predictRow(getNPredFac() == 0 ? &PredictFrame::predictNum : (getNPredNum() == 0 ? &PredictFrame::predictFac : &PredictFrame::predictMixed)),
+  predictLeaves(make_unique<unsigned int[]>(getExtent() * nTree)) {
 }
 
 
-void Predict::predictAcross(Quant *quant) {
-  for (unsigned int rowStart = 0; rowStart < nRow; rowStart += rowBlock) {
-    unsigned int rowEnd = min(rowStart + rowBlock, nRow);
-    framePredict->transpose(rowStart, rowEnd);
-    predictBlock(rowStart, rowEnd);
-    leaf->scoreBlock(predictLeaves.get(), rowStart, rowEnd);
-    if (quant != nullptr) {
-      quant->predictAcross(this, rowStart, rowEnd);
-    }
+void PredictFrame::predictAcross(size_t rowStart) {
+  predictBlock(rowStart);
+  predict->scoreBlock(predictLeaves.get(), rowStart, getExtent());
+  predict->quantBlock(this, rowStart, getExtent());
+}
+
+
+void Predict::scoreBlock(const unsigned int predictLeaves[], size_t rowStart, size_t extent) const {
+  leaf->scoreBlock(predictLeaves, rowStart, extent);
+}
+
+
+void Predict::quantBlock(const PredictFrame* frame, size_t rowStart, size_t extent) const {
+  if (quant != nullptr) {
+    quant->predictAcross(frame, rowStart, extent);
   }
 }
 
 
-void Predict::predictBlock(unsigned int rowStart,
-                           unsigned int rowEnd) {
-  if (framePredict->getNPredFac() == 0)
-    predictBlockNum(rowStart, rowEnd);
-  else if (framePredict->getNPredNum() == 0)
-    predictBlockFac(rowStart, rowEnd);
-  else
-    predictBlockMixed(rowStart, rowEnd);
-}
-
-
-void Predict::predictBlockNum(unsigned int rowStart,
-                              unsigned int rowEnd) {
+void PredictFrame::predictBlock(size_t rowStart) {
   OMPBound row;
-  OMPBound rowSup = (OMPBound) rowEnd;
+  OMPBound rowSup = (OMPBound) (rowStart + getExtent());
 
 #pragma omp parallel default(shared) private(row) num_threads(OmpThread::nThread)
   {
 #pragma omp for schedule(dynamic, 1)
     for (row = (OMPBound) rowStart; row < rowSup; row++) {
-      rowNum(row, row - rowStart, forest->getNode());
+      (this->*PredictFrame::predictRow)(row, row - rowStart);
     }
   }
 }
 
 
-void Predict::predictBlockFac(unsigned int rowStart,
-                              unsigned int rowEnd) {
-  OMPBound row;
-  OMPBound rowSup = (OMPBound) rowEnd;
-
-#pragma omp parallel default(shared) private(row) num_threads(OmpThread::nThread)
-  {
-#pragma omp for schedule(dynamic, 1)
-    for (row = (OMPBound) rowStart; row < rowSup; row++) {
-      rowFac(row, row - rowStart, forest->getNode(), forest->getFacSplit());
-  }
-  }
-
-}
-
-
-void Predict::predictBlockMixed(unsigned int rowStart,
-                                unsigned int rowEnd) {
-  OMPBound row;
-  OMPBound rowSup = (OMPBound) rowEnd;
-
-#pragma omp parallel default(shared) private(row) num_threads(OmpThread::nThread)
-  {
-#pragma omp for schedule(dynamic, 1)
-    for (row = (OMPBound) rowStart; row < rowSup; row++) {
-      rowMixed(row, row - rowStart, forest->getNode(), forest->getFacSplit());
-    }
-  }
-}
-
-
-void Predict::rowNum(unsigned int row,
-                     unsigned int blockRow,
-                     const TreeNode *treeNode) {
-  auto rowT = framePredict->baseNum(blockRow);
+void PredictFrame::predictNum(size_t row, size_t rowOff) {
+  auto rowT = baseNum(rowOff);
   for (unsigned int tIdx = 0; tIdx < nTree; tIdx++) {
-    auto leafIdx = noLeaf;
-    if (!(oob && bag->testBit(tIdx, row))) {
-      auto idx = treeOrigin[tIdx];
-      do {
-        idx += treeNode[idx].advance(rowT, leafIdx);
-      } while (leafIdx == noLeaf);
-    }
-    predictLeaf(blockRow, tIdx, leafIdx);
+    unsigned int leafIdx = predict->rowNum(tIdx, rowT, row);
+    predictLeaf(rowOff, tIdx, leafIdx);
   }
 }
 
 
-void Predict::rowFac(unsigned int row,
-                     unsigned int blockRow,
-                     const TreeNode *treeNode,
-                     const BVJagged *facSplit) {
+void PredictFrame::predictFac(size_t row, size_t rowOff)  {
+  auto rowT = baseFac(rowOff);
   for (unsigned int tIdx = 0; tIdx < nTree; tIdx++) {
-    auto leafIdx = noLeaf;
-    if (!(oob && bag->testBit(tIdx, row))) {
-      auto rowT = framePredict->baseFac(blockRow);
-      auto idx = treeOrigin[tIdx];
-      do {
-        idx += treeNode[idx].advance(facSplit, rowT, tIdx, leafIdx);
-      } while (leafIdx == noLeaf);
-    }
-    predictLeaf(blockRow, tIdx, leafIdx);
+    unsigned int leafIdx = predict->rowFac(tIdx, rowT, row);
+    predictLeaf(rowOff, tIdx, leafIdx);
   }
 }
 
 
-void Predict::rowMixed(unsigned int row,
-                       unsigned int blockRow,
-                       const TreeNode *treeNode,
-                       const BVJagged *facSplit) {
+void PredictFrame::predictMixed(size_t row, size_t rowOff) {
+  const double* rowNT = baseNum(rowOff);
+  const unsigned int* rowFT = baseFac(rowOff);
   for (unsigned int tIdx = 0; tIdx < nTree; tIdx++) {
-    auto leafIdx = noLeaf;
-    if (!(oob && bag->testBit(tIdx, row))) {
-      auto rowNT = framePredict->baseNum(blockRow);
-      auto rowFT = framePredict->baseFac(blockRow);
-      auto idx = treeOrigin[tIdx];
-      do {
-        idx += treeNode[idx].advance(framePredict, facSplit, rowFT, rowNT, tIdx, leafIdx);
-      } while (leafIdx == noLeaf);
-    }
-    predictLeaf(blockRow, tIdx, leafIdx);
+    unsigned int leafIdx = predict->rowMixed(tIdx, this, rowNT, rowFT, row);
+    predictLeaf(rowOff, tIdx, leafIdx);
   }
+}
+
+
+unsigned int Predict::rowNum(unsigned int tIdx,
+                             const double* rowT,
+                             size_t row) {
+  unsigned int leafIdx = noLeaf;
+  if (!bag->isBagged(oob, tIdx, row)) {
+    auto idx = treeOrigin[tIdx];//orig;
+    do {
+      idx += treeNode[idx].advance(rowT, leafIdx);
+    } while (leafIdx == noLeaf);
+  }
+  return leafIdx;
+}
+
+
+unsigned int Predict::rowFac(const unsigned int tIdx,
+                             const unsigned int* rowT,
+                             size_t row) {
+  unsigned int leafIdx = noLeaf;
+  if (!bag->isBagged(oob, tIdx, row)) {
+    auto idx = treeOrigin[tIdx];//orig;
+    do {
+      idx += treeNode[idx].advance(facSplit, rowT, tIdx, leafIdx);
+    } while (leafIdx == noLeaf);
+  }
+  return leafIdx;
+}
+
+
+unsigned int Predict::rowMixed(unsigned int tIdx,
+                               const PredictFrame* frame,
+                               const double* rowNT,
+                               const unsigned int* rowFT,
+                               size_t row) {
+  unsigned int leafIdx = noLeaf;
+  if (!bag->isBagged(oob, tIdx, row)) {
+    auto idx = treeOrigin[tIdx];
+    do {
+      idx += treeNode[idx].advance(frame, facSplit, rowFT, rowNT, tIdx, leafIdx);
+    } while (leafIdx == noLeaf);
+  }
+
+  return leafIdx;
+}
+
+
+/**
+   @brief Computes pointer to base of row of numeric values.
+
+   @param rowOff is a block-relative row offset.
+
+   @return base address for numeric values at row.
+*/
+const double* PredictFrame::baseNum(size_t rowOff) const {
+  return blockNum->rowBase(rowOff);
+}
+
+
+/**
+   @brief Computes pointer to base of row of factor values.
+
+   @param rowOff is a block-relative row offset.
+
+   @return base address for factor values at row.
+*/
+const unsigned int* PredictFrame::baseFac(size_t rowOff) const {
+  return blockFac->rowBase(rowOff);
 }

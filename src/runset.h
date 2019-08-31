@@ -14,12 +14,13 @@
    @author Mark Seligman
  */
 
-#ifndef ARBORIST_RUNSET_H
-#define ARBORIST_RUNSET_H
+#ifndef CART_RUNSET_H
+#define CART_RUNSET_H
 
 #include <vector>
 
 #include "typeparam.h"
+#include "sumcount.h"
 
 /**
    FRNodes hold field values accumulated from runs of factors having the
@@ -32,12 +33,13 @@
 class FRNode {
  public:
   unsigned int rank; // Same 0-based value as internal code.
-  unsigned int start; // Buffer position of start of factor run.
-  unsigned int extent; // Total indices subsumed.
-  unsigned int sCount; // Sample count of factor run:  not always same as length.
+  IndexT sCount; // Sample count of factor run:  need not equal length.
   double sum; // Sum of responses associated with run.
+  IndexRange range;
 
-  FRNode() : start(0), extent(0), sCount(0), sum(0.0) {}
+  FRNode() : sCount(0), sum(0.0) {
+    range.set(0, 0);
+  }
 
   bool isImplicit();
 
@@ -45,39 +47,44 @@ class FRNode {
   /**
      @brief Initializer.
    */
-  inline void init(unsigned int rank_,
-                   unsigned int sCount_,
-                   double sum_,
-                   unsigned int start_,
-                   unsigned int extent_) {
-    rank = rank_;
-    sCount = sCount_;
-    sum = sum_;
-    start = start_;
-    extent = extent_;
+  inline void init(unsigned int rank,
+                   IndexT sCount,
+                   double sum,
+                   IndexT start,
+                   IndexT extent) {
+    this->rank = rank;
+    this->sCount = sCount;
+    this->sum = sum;
+    this->range.set(start, extent);
   }
 
   
   /**
-     @brief Replay accessor.  N.B.:  Should not be invoked on dense
+     @brief Range accessor.  N.B.:  Should not be invoked on dense
      run, as 'start' will hold a reserved value.
 
-     @param[out] start_ outputs the starting index.
-
-     @param[out] extent_ outputs the count of indices subsumed.
+     @return range of indices subsumed by run.
    */
-  inline void replayRef(unsigned int &start_, unsigned int &extent_) {
-    start_ = start;
-    extent_ = extent;
+  inline IndexRange getRange() const {
+    return range;
   }
 
+
+  /**
+     @brief Accumulates run contents into caller.
+   */
+  inline void accum(IndexT& sCount,
+                    double& sum) const {
+    sCount += this->sCount;
+    sum += this->sum;
+  }
 
   /**
      @brief Rank getter.
 
      @return rank.
    */
-  inline unsigned int getRank() const {
+  inline auto getRank() const {
     return rank;
   }
 };
@@ -134,10 +141,19 @@ class RunSet {
   double *rvZero; // Non-binary wide runs:  random variates for sampling.
   unsigned int runCount;  // Current high watermark:  not subject to shrinking.
   unsigned int runsLH; // Count of LH runs.
+
+
+  /**
+     @brief Caches response sums.
+
+     @param nodeSum is the per-category response over the node (IndexSet).
+   */
+  void setSumCtg(const vector<double> &nodeSum);
+
+
  public:
   static constexpr unsigned int maxWidth = 10; // Algorithmic threshold.
-  static unsigned int ctgWidth; // Response cardinality.
-  static unsigned int noStart; // Inattainable index.
+  static IndexT noStart; // Inattainable index.
   unsigned int safeRunCount;
 
   RunSet() : hasImplicit(false), runOff(0), heapOff(0), outOff(0), runZero(0), heapZero(0), outZero(0), ctgZero(0), rvZero(0), runCount(0), runsLH(0), safeRunCount(0) {}
@@ -164,17 +180,16 @@ class RunSet {
   /**
      @brief Builds a run for the dense rank using residual values.
 
-     @param denseRank is the rank corresponding to the dense factor.
+     @param cand is the splitting candidate with potential implicit state.
 
-     @param sCountTot is the total sample count over the node.
-   
-     @param sumTot is the total sum of responses over the node.
+     @param denseRank is the rank of the implicit blob, if any.
+
+     @param ctgSum is the per-category response over the node (IndexSet).
   */
-  void writeImplicit(unsigned int denseRank,
-                     unsigned int sCountTot,
-                     double sumTot,
-                     unsigned int denseCount,
-                     const double nodeSum[] = 0);
+  void writeImplicit(const class SplitCand* cand,
+                     const class SplitFrontier* sp,
+                     const vector<double>& ctgSum = vector<double>(0));
+
   /**
      @brief Hammers the pair's run contents with runs selected for
      sampling.
@@ -184,7 +199,7 @@ class RunSet {
 
      @return post-shrink run count.
   */
-  unsigned int deWide();
+  unsigned int deWide(unsigned int nCtg);
 
   /**
      @brief Depopulates the heap associated with a pair and places sorted ranks into rank vector.
@@ -201,6 +216,7 @@ class RunSet {
               vector<BHPair> &bHeap,
               vector<unsigned int> &lhOut,
               vector<double> &ctgSum,
+              unsigned int nCtg,
               vector<double> &rvWide);
 
   /**
@@ -226,11 +242,46 @@ class RunSet {
 
 
   /**
+     @brief Redirects samples to left or right according.
+
+     @param cand is a splitting candidate.
+
+     @param iSet encodes the sample indices associated with the split.
+
+     @param preTree is the crescent pre-tree.
+
+     @param index is the index set environment for the current level.
+
+     @param[out] replayLeft outputs true iff split LHS contains implicit runs.
+
+     @return sum of replayed response.
+   */
+  double branch(class IndexSet* iSet,
+                class PreTree* preTree,
+                const class SplitFrontier* splitFrontier,
+                class BV* bvLeft,
+                class BV* bvRight,
+                vector<SumCount>& ctgCrit,
+                bool& replayLeft) const;
+
+
+  /**
+     @brief Subtracts a run's per-category responses from the current run.
+
+     @param nCtg is the response cardinality.
+
+     @param runIdx is the run index.
+   */
+  void residCtg(unsigned int nCtg,
+                unsigned int runIdx);
+
+
+  /**
      @brief Accessor for runCount field.
 
      @return reference to run count.
    */
-  inline unsigned int getRunCount() const {
+  inline auto getRunCount() const {
     return runCount;
   }
 
@@ -257,37 +308,29 @@ class RunSet {
 
 
   /**
-     @brief Looks up sum and sample count associated with a given output slot.
+     @brief Accumulates contents at position referenced by a given index.
 
-     @param outPos is a position in the output vector.
+     @param outPos is an index in the output vector.
 
-     @param sCount outputs the sample count at the dereferenced output slot.
+     @param sCount[in, out] accumulates sample count using the output position.
 
-     @return sum at dereferenced position, with output reference parameter.
+     @param sum[in, out] accumulates the sum using the output position.
    */
-  inline double sumHeap(unsigned int outPos, unsigned int &sCount) {
+  inline void sumAccum(unsigned int outPos, IndexT& sCount, double& sum) {
     unsigned int slot = outZero[outPos];
-    sCount = runZero[slot].sCount;
-    
-    return runZero[slot].sum;
+    runZero[slot].accum(sCount, sum);
   }
 
   /**
      @brief Sets run parameters and increments run count.
-
-     @return void.
    */
-  inline void write(unsigned int rank, unsigned int sCount, double sum, unsigned int extent, unsigned int start = noStart) {
+  inline void write(unsigned int rank,
+                    IndexT sCount,
+                    double sum,
+                    IndexT extent,
+                    IndexT start = noStart) {
     runZero[runCount++].init(rank, sCount, sum, start, extent);
-    hasImplicit = (start == noStart ? true : false);
-  }
-
-
-  /**
-     @return checkerboard value at slot for category.
-   */
-  inline double getSumCtg(unsigned int slot, unsigned int yCtg) const {
-    return ctgZero[slot * ctgWidth + yCtg];
+    hasImplicit = (start == noStart);
   }
 
 
@@ -297,13 +340,18 @@ class RunSet {
 
      @return void.
    */
-  inline void accumCtg(unsigned int yCtg, double ySum) {
-    ctgZero[runCount * ctgWidth + yCtg] += ySum;
+  inline void accumCtg(unsigned int nCtg,
+                       double ySum,
+                       unsigned int yCtg) {
+    ctgZero[runCount * nCtg + yCtg] += ySum;
   }
 
 
-  inline void setSumCtg(unsigned int yCtg, double ySum) {
-    ctgZero[runCount * ctgWidth + yCtg] = ySum;
+  /**
+     @return checkerboard value at slot for category.
+   */
+  inline double getSumCtg(unsigned int slot, unsigned int nCtg, unsigned int yCtg) const {
+    return ctgZero[slot * nCtg + yCtg];
   }
 
 
@@ -321,19 +369,19 @@ class RunSet {
    */
   inline bool accumBinary(unsigned int outPos, double &sum0, double &sum1) {
     unsigned int slot = outZero[outPos];
-    double cell0 = getSumCtg(slot, 0);
+    double cell0 = getSumCtg(slot, 2, 0);
     sum0 += cell0;
-    double cell1 = getSumCtg(slot, 1);
+    double cell1 = getSumCtg(slot, 2, 1);
     sum1 += cell1;
 
-    unsigned int sCount = runZero[slot].sCount;
+    IndexT sCount = runZero[slot].sCount;
     unsigned int slotNext = outZero[outPos+1];
     // Cannot test for floating point equality.  If sCount values are unequal,
     // then assumes the two slots are significantly different.  If identical,
     // then checks whether the response values are likely different, given
     // some jittering.
     // TODO:  replace constant with value obtained from class weighting.
-    return sCount != runZero[slotNext].sCount ? true : getSumCtg(slotNext, 1) - cell1 > 0.9;
+    return sCount != runZero[slotNext].sCount ? true : getSumCtg(slotNext, 2, 1) - cell1 > 0.9;
   }
 
 
@@ -344,18 +392,18 @@ class RunSet {
 
     @param pos is the position to dereference in the rank vector.
 
-    @param count outputs the sample count.
+    @param sCount outputs the sample count.
 
     @return total index count subsumed, with reference accumulator.
   */
-  inline unsigned int lHCounts(unsigned int slot, unsigned int &sCount) const {
+  inline IndexT lHCounts(unsigned int slot, IndexT& sCount) const {
     FRNode *fRun = &runZero[slot];
     sCount = fRun->sCount;
-    return  fRun->extent;
+    return  fRun->range.getExtent();
   }
 
 
-  inline unsigned int getRunsLH() const {
+  inline auto getRunsLH() const {
     return runsLH;
   }
 
@@ -389,11 +437,9 @@ class RunSet {
      
      N.B.:  should not be called with a dense run.
 
-     @param start outputs starting index of run.
-
-     @param extent outputs the index extent of the run.
+     @return index range associated with run.
   */
-  void bounds(unsigned int outSlot, unsigned int &start, unsigned int &extent) const;
+  IndexRange getBounds(unsigned int outSlot) const;
 };
 
 
@@ -404,7 +450,6 @@ class RunSet {
    Run objects are allocated per-tree, and live throughout training.
 */
 class Run {
-  const unsigned int noRun;  // Inattainable run index for tree.
   unsigned int setCount;
   vector<RunSet> runSet;
   vector<FRNode> facRun; // Workspace for FRNodes used along level.
@@ -421,24 +466,7 @@ class Run {
   void runSets(const vector<unsigned int>& safeCount);
 
 
-  inline unsigned int getRunCount(unsigned int rsIdx) const {
-    return runSet[rsIdx].getRunCount();
-  }
-
-  inline unsigned int getRank(unsigned int idx, unsigned int outSlot) const {
-    return runSet[idx].getRank(outSlot);
-  }
-
-  inline void runBounds(unsigned int idx, unsigned int outSlot, unsigned int &start, unsigned int &extent) const {
-    runSet[idx].bounds(outSlot, start, extent);
-  }
-
-  inline unsigned int getRunsLH(unsigned int rsIdx) const {
-    return runSet[rsIdx].getRunsLH();
-  }
-
-
- public:
+public:
   const unsigned int ctgWidth;  // Response cardinality; zero iff numerical.
 
   /**
@@ -447,17 +475,14 @@ class Run {
      @param ctgWidth_ is the response cardinality.
 
      @param nRow is the number of training rows:  inattainable offset.
-
-     @param noCand reserves an index value inattainable for any run.
   */
   Run(unsigned int ctgWidth_,
-      unsigned int nRow,
-      unsigned int noCand);
+      unsigned int nRow);
 
   /**
      @brief Clears workspace used by current level.
    */
-  void levelClear();
+  void clear();
 
   /**
      @brief Regression:  all runs employ a heap.
@@ -475,11 +500,6 @@ class Run {
   void offsetsCtg(const vector<unsigned int> &safeCount);
 
   /**
-     @brief Indicates whether splitting candidate contains runs.
-   */
-  bool isRun(const class SplitCand& cand) const;
-
-  /**
      @brief Redirects samples to left or right according.
 
      @param cand is a splitting candidate.
@@ -490,33 +510,19 @@ class Run {
 
      @param index is the index set environment for the current level.
 
-     @return true iff left-bound split contains implicit runs.
+     @param[out] replay left outputs true iff split LHS contains implicit runs.
+
+     @return sum of replayed response.
    */
-  bool branchFac(const class SplitCand& cand,
-                 class IndexSet* iSet,
-                 class PreTree* preTree,
-                 class IndexLevel* index) const;
+  double branch(const class SplitFrontier* splitFrontier,
+                class IndexSet* iSet,
+                class PreTree* preTree,
+                class BV* bvLeft,
+                class BV* bvRight,
+                vector<SumCount>& ctgCrit,
+                bool& replayLeft) const;
 
-  /**
-     @brief Indicates whether index passed references a run.
-
-     @param setIdx is a putatitive run-set index.
-
-     @return true iff run referenced.
-   */
-  inline bool isRun(unsigned int setIdx) const {
-    return setIdx != noRun;
-  }
-
-
-  /**
-     @brief Getter for noRun index.
-   */
-  inline unsigned int getNoRun() const {
-    return noRun;
-  }
-
-
+  
   /**
      @brief Accessor for RunSet at specified index.
    */

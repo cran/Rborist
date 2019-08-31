@@ -15,18 +15,16 @@
 
 #include "runset.h"
 #include "callback.h"
+#include "splitfrontier.h"
 #include "splitcand.h"
 #include "pretree.h"
-#include "index.h"
+#include "frontier.h"
 
-unsigned int RunSet::ctgWidth = 0;
-unsigned int RunSet::noStart = 0;
+IndexT RunSet::noStart = 0;
 
 
 Run::Run(unsigned int ctgWidth_,
-         unsigned int nRow,
-         unsigned int noCand) :
-  noRun(noCand),
+         unsigned int nRow) :
   setCount(0),
   runSet(vector<RunSet>(0)),
   facRun(vector<FRNode>(0)),
@@ -35,7 +33,6 @@ Run::Run(unsigned int ctgWidth_,
   ctgSum(vector<double>(0)),
   rvWide(vector<double>(0)),
   ctgWidth(ctgWidth_) {
-  RunSet::ctgWidth = ctgWidth;
   RunSet::noStart = nRow; // Inattainable start value, irrespective of tree.
 }
 
@@ -53,10 +50,6 @@ void Run::runSets(const vector<unsigned int> &safeCount) {
   for (unsigned int setIdx = 0; setIdx < setCount; setIdx++) {
     setSafeCount(setIdx, safeCount[setIdx]);
   }
-}
-
-bool Run::isRun(const SplitCand& cand) const {
-  return isRun(cand.getSetIdx());
 }
 
 
@@ -125,42 +118,49 @@ void Run::offsetsCtg(const vector<unsigned int> &safeCount) {
 
 void Run::reBase() {
   for (auto & rs  : runSet) {
-    rs.reBase(facRun, bHeap, lhOut, ctgSum, rvWide);
-  }
-}
-
-bool Run::branchFac(const SplitCand& argMax,
-                    IndexSet* iSet,
-                    PreTree* preTree,
-                    IndexLevel* index) const {
-  preTree->branchFac(argMax, iSet->getPTId());
-  auto setIdx = argMax.getSetIdx();
-  if (runSet[setIdx].implicitLeft()) {// LH holds bits, RH holds replay indices.
-    for (unsigned int outSlot = 0; outSlot < getRunCount(setIdx); outSlot++) {
-      if (outSlot < getRunsLH(setIdx)) {
-        preTree->LHBit(iSet->getPTId(), getRank(setIdx, outSlot));
-      }
-      else {
-        unsigned int runStart, runExtent;
-        runBounds(setIdx, outSlot, runStart, runExtent);
-        iSet->blockReplay(argMax, runStart, runExtent, index);
-      }
-    }
-    return false;
-  }
-  else { // LH runs hold both bits and replay indices.
-    for (unsigned int outSlot = 0; outSlot < getRunsLH(setIdx); outSlot++) {
-      preTree->LHBit(iSet->getPTId(), getRank(setIdx, outSlot));
-      unsigned int runStart, runExtent;
-      runBounds(setIdx, outSlot, runStart, runExtent);
-      iSet->blockReplay(argMax, runStart, runExtent, index);
-    }
-    return true;
+    rs.reBase(facRun, bHeap, lhOut, ctgSum, ctgWidth, rvWide);
   }
 }
 
 
-void Run::levelClear() {
+double Run::branch(const SplitFrontier* splitFrontier,
+                   IndexSet* iSet,
+                   PreTree* preTree,
+                   BV* bvLeft,
+                   BV* bvRight,
+                   vector<SumCount>& ctgCrit,
+                   bool& replayLeft) const {
+  return runSet[splitFrontier->getSetIdx(iSet)].branch(iSet, preTree, splitFrontier, bvLeft, bvRight, ctgCrit, replayLeft);
+}
+
+
+double RunSet::branch(IndexSet* iSet,
+                      PreTree* preTree,
+                      const SplitFrontier* splitFrontier,
+                      BV* replayExpl,
+                      BV* replayLeft,
+                      vector<SumCount>& ctgCrit,
+                      bool& leftExpl) const {
+  double sumExpl = 0.0;
+  leftExpl = !implicitLeft(); // true iff left-explicit replay indices.
+  for (unsigned int outSlot = 0; outSlot < getRunsLH(); outSlot++) {
+    preTree->setLeft(iSet, getRank(outSlot));
+    if (leftExpl) {
+      sumExpl += splitFrontier->blockReplay(iSet, getBounds(outSlot), true, replayExpl, replayLeft, ctgCrit);
+    }
+  }
+
+  if (!leftExpl) { // Replay indices explicit on right.
+    for (auto outSlot = getRunsLH(); outSlot < getRunCount(); outSlot++) {
+      sumExpl += splitFrontier->blockReplay(iSet, getBounds(outSlot), false, replayExpl, replayLeft, ctgCrit);
+    }
+  }
+
+  return sumExpl;
+}
+
+
+void Run::clear() {
   runSet.clear();
   facRun.clear();
   lhOut.clear();
@@ -186,12 +186,13 @@ void RunSet::reBase(vector<FRNode>& runBase,
                     vector<BHPair>& heapBase,
                     vector<unsigned int>& outBase,
                     vector<double>& ctgBase,
+                    unsigned int nCtg,
                     vector<double>& rvBase) {
   runZero = &runBase[runOff];
   heapZero = &heapBase[heapOff];
   outZero = &outBase[outOff];
   rvZero = rvBase.size() > 0 ? &rvBase[heapOff] : nullptr;
-  ctgZero = ctgBase.size() > 0 ?  &ctgBase[runOff * ctgWidth] : nullptr;
+  ctgZero = ctgBase.size() > 0 ?  &ctgBase[runOff * nCtg] : nullptr;
   runCount = 0;
 }
 
@@ -217,31 +218,43 @@ void RunSet::heapBinary() {
   // In the absence of class weighting, numerator can be (integer) slot
   // sample count, instead of slot sum.
   for (unsigned int slot = 0; slot < runCount; slot++) {
-    BHeap::insert(heapZero, slot, getSumCtg(slot, 1) / runZero[slot].sum);
+    BHeap::insert(heapZero, slot, getSumCtg(slot, 2, 1) / runZero[slot].sum);
   }
 }
 
 
-void RunSet::writeImplicit(unsigned int denseRank, unsigned int sCountTot, double sumTot, unsigned int denseCount, const double nodeSum[]) {
-  if (nodeSum != 0) {
-    for (unsigned int ctg = 0; ctg < ctgWidth; ctg++) {
-      setSumCtg(ctg, nodeSum[ctg]);
-    }
-  }
+void RunSet::writeImplicit(const SplitCand* cand, const SplitFrontier* sp,  const vector<double>& ctgSum) {
+  IndexT implicit = cand->getImplicit();
+  if (implicit == 0)
+    return;
+
+  IndexT sCount = cand->getSCount();
+  double sum = cand->getSum();
+  setSumCtg(ctgSum);
 
   for (unsigned int runIdx = 0; runIdx < runCount; runIdx++) {
-    sCountTot -= runZero[runIdx].sCount;
-    sumTot -= runZero[runIdx].sum;
-    if (nodeSum != 0) {
-      for (unsigned int ctg = 0; ctg < ctgWidth; ctg++) {
-        accumCtg(ctg, -getSumCtg(runIdx, ctg));
-      }
-    }
+    sCount -= runZero[runIdx].sCount;
+    sum -= runZero[runIdx].sum;
+    residCtg(ctgSum.size(), runIdx);
   }
 
-  write(denseRank, sCountTot, sumTot, denseCount);
+  write(sp->getDenseRank(cand), sCount, sum, implicit);
 }
 
+
+void RunSet::setSumCtg(const vector<double>& ctgSum) {
+  for (unsigned int ctg = 0; ctg < ctgSum.size(); ctg++) {
+    ctgZero[runCount * ctgSum.size() + ctg] = ctgSum[ctg];
+  }
+}
+
+
+void RunSet::residCtg(unsigned int nCtg, unsigned int runIdx) {
+  for (unsigned int ctg = 0; ctg < nCtg; ctg++) {
+    ctgZero[runCount * nCtg + ctg] -= getSumCtg(runIdx, nCtg, ctg);
+  }
+}
+  
 
 /**
    @brief Implicit runs are characterized by a start value of 'noStart'.
@@ -249,7 +262,7 @@ void RunSet::writeImplicit(unsigned int denseRank, unsigned int sCountTot, doubl
    @return Whether this run is dense.
  */
 bool FRNode::isImplicit() {
-  return start == RunSet::noStart;
+  return range.getStart() == RunSet::noStart;
 }
 
 
@@ -273,22 +286,22 @@ void RunSet::dePop(unsigned int pop) {
 }
 
 
-unsigned int RunSet::deWide() {
+unsigned int RunSet::deWide(unsigned int nCtg) {
   if (runCount <= maxWidth)
     return runCount;
 
   heapRandom();
 
   vector<FRNode> tempRun(maxWidth);
-  vector<double> tempSum(ctgWidth * maxWidth); // Accessed as matrix.
+  vector<double> tempSum(nCtg * maxWidth); // Accessed as ctg-minor matrix.
 
   // Copies runs referenced by the slot list to a temporary area.
   dePop(maxWidth);
   unsigned i = 0;
   for (auto & tr : tempRun) {
     unsigned int outSlot = outZero[i];
-    for (unsigned int ctg = 0; ctg < ctgWidth; ctg++) {
-      tempSum[i * ctgWidth + ctg] = ctgZero[outSlot * ctgWidth + ctg];
+    for (unsigned int ctg = 0; ctg < nCtg; ctg++) {
+      tempSum[i * nCtg + ctg] = ctgZero[outSlot * nCtg + ctg];
     }
     tr = runZero[outSlot];
     i++;
@@ -297,8 +310,8 @@ unsigned int RunSet::deWide() {
   // Overwrites existing runs with the shrunken list
   i = 0;
   for (auto tr : tempRun) {
-    for (unsigned int ctg = 0; ctg < ctgWidth; ctg++) {
-      ctgZero[i * ctgWidth + ctg] = tempSum[i * ctgWidth + ctg];
+    for (unsigned int ctg = 0; ctg < nCtg; ctg++) {
+      ctgZero[i * nCtg + ctg] = tempSum[i * nCtg + ctg];
     }
     runZero[i] = tr;
     i++;
@@ -412,9 +425,9 @@ unsigned int BHeap::slotPop(BHPair pairVec[], int bot) {
 }
 
 
-void RunSet::bounds(unsigned int outSlot, unsigned int &start, unsigned int &extent) const {
+IndexRange RunSet::getBounds(unsigned int outSlot) const {
   unsigned int slot = outZero[outSlot];
-  runZero[slot].replayRef(start, extent);
+  return runZero[slot].getRange();
 }
 
 

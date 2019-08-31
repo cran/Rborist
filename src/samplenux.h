@@ -13,11 +13,11 @@
    @author Mark Seligman
  */
 
-#ifndef ARBORIST_SAMPLENUX_H
-#define ARBORIST_SAMPLENUX_H
+#ifndef CORE_SAMPLENUX_H
+#define CORE_SAMPLENUX_H
 
 #include "typeparam.h"
-
+#include <vector>
 
 /**
    @brief Single node type for regression and classification.
@@ -74,15 +74,15 @@ class SampleNux {
      @param sampleCount (>0) is the number of times value sampled.
 
      @param ctg is the response category, if classification.
+  */ 
+  SampleNux(FltVal yVal,
+            unsigned int sampleCount,
+            unsigned int ctg = 0) :
+    sCount((sampleCount << ctgShift) | ctg),
+    ySum(yVal * sampleCount) {
+  }
 
-     @param return sum of sampled values.
-   */
-  inline double init(FltVal yVal,
-                     unsigned int sampleCount,
-                     unsigned int ctg = 0) {
-    ySum = yVal * sampleCount;
-    sCount = (sampleCount << ctgShift) | ctg; 
-    return ySum;
+  SampleNux() {
   }
 
 
@@ -150,7 +150,7 @@ class SampleNux {
  */
 class SampleRank : public SampleNux {
  protected:
-  unsigned int rank; // Rank, up to tie, or factor group.
+  IndexType rank; // Rank, up to tie, or factor group.
 
  public:
 
@@ -159,7 +159,7 @@ class SampleRank : public SampleNux {
 
      @return rank value.
    */
-  inline unsigned int getRank() const {
+  inline auto getRank() const {
     return rank;
   }
 
@@ -169,7 +169,7 @@ class SampleRank : public SampleNux {
 
      @return sum of y-values for sample.
    */
-  inline FltVal getYSum() const {
+  inline auto getYSum() const {
     return ySum;
   }
 
@@ -181,7 +181,7 @@ class SampleRank : public SampleNux {
 
      @param sNode summarizes response sampled at row.
   */
-  inline void join(unsigned int rank, const SampleNux &sNode) {
+  inline void join(IndexType rank, const SampleNux &sNode) {
     this->rank = rank;
     sNode.ref(ySum, sCount);
   }
@@ -225,8 +225,8 @@ class SampleRank : public SampleNux {
 
      @return sample count.
    */
-  inline unsigned int ctgFields(FltVal &ySum,
-                                unsigned int &yCtg) const {
+  inline auto ctgFields(FltVal &ySum,
+                        unsigned int &yCtg) const {
     ySum = this->ySum;
     yCtg = getCtg();
 
@@ -246,12 +246,22 @@ class SampleRank : public SampleNux {
 
      @return predictor rank.
    */
-  inline unsigned int ctgFields(FltVal &ySum_,
-                                unsigned int &sCount_,
-                                unsigned int &yCtg_) const {
+  inline auto ctgFields(FltVal &ySum_,
+                        unsigned int &sCount_,
+                        unsigned int &yCtg_) const {
     sCount_ = ctgFields(ySum_, yCtg_);
     return rank;
   }
+
+  
+  /**
+     @brief Accumulates this cell's contents in per-category vector.
+
+     @param[in, out] ctgExpl accumulates sample counts and values by category.
+
+     @return ySum value.
+   */
+  FltVal accum(vector<class SumCount>& ctgExpl) const;
 };
 
 #endif

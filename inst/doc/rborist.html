@@ -279,9 +279,9 @@ hr {
 
 <p>This option is primarily for the use of package maintainers, but may prove useful, for example, in instances when model fit is not a main concern.  The <em>validation</em> field will then have value NULL.</p>
 
-<h1>Quantile regression</h1>
+<h1>Quantile prediction</h1>
 
-<p>When training a regression forest, Rborist provides quantiles simply for the asking.  Leaf information, by default, is rich enough to make their computation quite easy.  Quantiles can be requested in either of two ways.  The simplest is to set option <em>quantiles</em> to <em>TRUE</em>:</p>
+<p>When predicting over a regression forest, Rborist provides quantiles simply for the asking.  Leaf information, by default, is rich enough to make their computation quite easy.  Quantiles can be requested in either of two ways.  The simplest is to set option <em>quantiles</em> to <em>TRUE</em>:</p>
 
 <pre><code class="r">       rs &lt;- Rborist(x, y, quantiles = TRUE)
 </code></pre>
@@ -291,15 +291,18 @@ hr {
 <pre><code class="r">       rs$validation$qPred
 </code></pre>
 
+<p>Quantile prediction also estimates the quantile position at which the predicted mean, <em>yPred</em>, lies.  This estimate is reported by the <em>qEst</em> value, as follow:</p>
+
+<p>&#39;&#39;&#39;{r, eval = FALSE}
+       rs$validation$qEst
+&#39;&#39;&#39;</p>
+
 <p>Explicity specfiying the quantile vector, <em>quantVec</em>, yields quantiles of any desired type.  Deciles, for example, can be requested as follows:</p>
 
 <pre><code class="r">       rs &lt;- Rborist(x, y, quantVec = seq(0.1, 1.0, by=0.1))
 </code></pre>
 
-<p>The algorithm employed to compute the quantiles is exact, up to the granularity of the response vector.  It is an \(\mathcal{O}(n^2)\) algorithm, however, and slows noticeably beyond roughly 10,000 rows.  For this reason an optional binning parameter can be specified to improve performance.  The following example turns on binning at 2000 rows:</p>
-
-<pre><code class="r">       rs &lt;- Rborist(x, y, quantiles=TRUE, qBin=2000)
-</code></pre>
+<p>The algorithm employed to compute the quantiles is approximate, as bining is employed to improve performance.</p>
 
 <p>If, on the other hand, when training a regression forest, quantiles are not desired and it is intended that quantiles will not subsequently be requested <em>after</em> training, space can be saved by representing leaves in a sparser form:</p>
 

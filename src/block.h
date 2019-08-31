@@ -13,107 +13,237 @@
    @author Mark Seligman
  */
 
-#ifndef ARBORIST_BLOCK_H
-#define ARBORIST_BLOCK_H
+#ifndef FRAMEMAP_BLOCK_H
+#define FRAMEMAP_BLOCK_H
 
 #include <vector>
 #include <cmath>
 
-#include "typeparam.h"
+using namespace std;
 
 
 /**
    @brief Abstract class for blocks of predictor values.
  */
-class BlockNum {
+
+template<class ty>
+class Block {
  protected:
-  double *blockNumT; // Iterator state
-  const unsigned int nCol; // # columns in untransposed form.
+  const ty* raw;
+  const size_t nCol; // # columns.
  public:
 
- BlockNum(unsigned int _nCol) : nCol(_nCol) {}
-  virtual ~BlockNum() {}
+  Block(const ty raw_[],
+        size_t nCol_) :
+    raw(raw_),
+    nCol(nCol_) {}
 
-  static BlockNum *Factory(const vector<double> &_valNum, const vector<unsigned int> &_rowStart, const vector<unsigned int> &_runLength, const vector<unsigned int> &_predStart, double *_feNumT, unsigned int _nCol);
+  virtual ~Block() {}
 
-  virtual void transpose(unsigned int rowStart, unsigned int rowEnd) = 0;
-
-
-  inline const unsigned int getNCol() const {
+  inline const auto getNCol() const {
     return nCol;
+  }
+};
+
+
+/**
+   @brief Rectangular block, parametrized by row and column.
+
+   Row-major access.
+ */
+template<class ty>
+class BlockDense : public Block<ty> {
+  size_t nRow;
+
+public:
+
+  BlockDense(size_t nRow_,
+             size_t nCol_,
+             const ty raw_[]) :
+    Block<ty>(raw_, nCol_), nRow(nRow_) {
+  }
+
+  ~BlockDense() {
+  }
+
+  size_t getNRow() const {
+    return nRow;
   }
 
   /**
-     @param rowOff is the offset of a given row.
+     @brief Exposes contents of a given row.
+
+     @param row is the given row.
 
      @return pointer to base of row contents.
    */  
-  inline const double *rowBase(unsigned int rowOff) const {
-    return blockNumT + nCol * rowOff;
+  inline const ty* rowBase(size_t row) const {
+    return Block<ty>::raw + Block<ty>::nCol * row;
   }
 };
 
 
 /**
-   @brief Encodes block of sparse data.
+   @brief Sparse predictor-ranked numerical block.
  */
-class BlockSparse : public BlockNum {
-  const double *val;
-  const unsigned int *rowStart;
-  const unsigned int *runLength;
-  const unsigned int *predStart;
-  double *transVal;
-  unsigned int *rowNext;
-  unsigned int *idxNext;
+template<class ty>
+class BlockJagged : public Block<ty> {
+  const unsigned int* colOffset;
 
  public:
+  BlockJagged(const ty raw_[],
+	      const unsigned int colOffset_[],
+              size_t nCol_) :
+    Block<ty>(raw_, nCol_),
+    colOffset(colOffset_) {
+  }
+
 
   /**
-     @brief Sparse constructor.
+     @return rank of specified predictor at specified rank.
    */
-  BlockSparse(const double *_val,
-	      const unsigned int *_rowStart,
-	      const unsigned int *__runLength,
-	      const unsigned int *_predStart,
-	      unsigned int _nCol);
-  ~BlockSparse();
-  void transpose(unsigned int rowStart, unsigned int rowEnd);
+  inline auto getVal(unsigned int predIdx,
+                     unsigned int rk) const {
+    return Block<ty>::raw[colOffset[predIdx] + rk];
+  }
+};
+
+
+
+/**
+   @brief Runlength-encoded sparse representation.
+ */
+template<class ty>
+class BlockRLE : public Block<ty> {
+  const unsigned int* rowOff;
+  const unsigned int* runLength;
+  const unsigned int* predStart;
+  // Persistent transpose state:
+  vector<unsigned int> rowNext;
+  vector<unsigned int> idxNext;
+  vector<ty> transVal;
+
+public:
+
+ /**
+     @brief Sparse constructor for prediction frame.
+  */
+  BlockRLE(size_t nCol_,
+           const ty* raw_,
+           const unsigned int* rowOff_,
+           const unsigned int* runLength_,
+           const unsigned int* predStart_) :
+    Block<ty>(raw_, nCol_),
+    rowOff(rowOff_),
+    runLength(runLength_),
+    predStart(predStart_),
+    rowNext(vector<unsigned int>(Block<ty>::nCol)),
+    idxNext(vector<unsigned int>(Block<ty>::nCol)),
+    transVal(vector<ty>(Block<ty>::nCol)) {
+    fill(rowNext.begin(), rowNext.end(), 0ul); // Position of first update.
+    unsigned int predIdx = 0;
+    for (auto & idxN : idxNext) {
+      idxN = predStart[predIdx++]; // Current starting offset.
+    }
+  }
+
+  ~BlockRLE() {
+  }
+
+
+  /**
+     @brief Transposes a block of rows into a dense sub-block.
+
+     @param[out] window outputs the densely-transposed values.
+   */  
+  inline void transpose(ty* window,
+                        size_t rowStart,
+                        size_t extent) {
+    ty* winRow = window;
+    for (size_t row = rowStart; row < rowStart + extent; row++) {
+      for (unsigned int predIdx = 0; predIdx < Block<ty>::nCol; predIdx++) {
+        if (row == rowNext[predIdx]) { // Assignments persist across invocations:
+          unsigned int valIdx = idxNext[predIdx];
+          transVal[predIdx] = Block<ty>::raw[valIdx];
+          rowNext[predIdx] = rowOff[valIdx] + runLength[valIdx];
+          idxNext[predIdx] = valIdx + 1;
+        }
+        winRow[predIdx] = transVal[predIdx];
+      }
+      winRow += Block<ty>::nCol;
+    }
+  }
 };
 
 
 /**
-   @brief Crescent analogue of BlockSparse.
+   @brief Crescent form of column-compressed sparse block.
  */
-class BSCresc {
+template<class ty>
+class BlockIPCresc {
   const unsigned int nRow;
   const unsigned int nPred;
 
   vector<unsigned int> predStart; // Starting offset for predictor.
   vector<unsigned int> rowStart; // Starting row of run.
-  vector<double> valNum; // Numerical value of run.
+  vector<ty> val; // Value of run.
   vector<unsigned int> runLength; // Length of run.
 
   /**
      @brief Pushes a run onto individual component vectors.
 
-     @param val is the numeric value of the run.
+     @param runVal is the value of the run.
 
      @param rl is the run length.
 
      @param row is the starting row of the run.
    */
-  inline void pushRun(double val,
+  inline void pushRun(ty runVal,
                       unsigned int rl,
                       unsigned int row) {
-    valNum.push_back(val);
+    val.push_back(runVal);
     runLength.push_back(rl);
     rowStart.push_back(row);
   }
 
 public:
 
-  BSCresc(unsigned int nRow_,
-          unsigned int nPred_);
+  BlockIPCresc(size_t nRow_,
+               size_t nCol) :
+    nRow(nRow_),
+    nPred(nCol),
+    predStart(vector<unsigned int>(nPred)) {
+  }
+
+
+  /**
+     @brief Getter for run values.
+   */
+  const vector<ty>& getVal() const {
+    return val;
+  }
+
+  /**
+     @brief Getter for starting row offsets;
+   */
+  const vector<unsigned int>& getRowStart() const {
+    return rowStart;
+  }
+
+  /**
+     @brief Getter for run lengths.
+   */
+  const vector<unsigned int> getRunLength() const {
+    return runLength;
+  }
+
+
+  /**
+     @brief Getter for predictor starting offsets.
+   */
+  const vector<unsigned int> getPredStart() const {
+    return predStart;
+  }
 
   /**
      @brief Constructs run vectors from I/P format suppled by front end.
@@ -129,126 +259,47 @@ public:
      @param p has length nCol + 1: index i > 0 gives the raw nonzero offset for
      predictor i-1 and index i == 0 gives the base offset.
    */
-  void nzRow(const double eltsNZ[],
+  void nzRow(const ty eltsNZ[],
              const int nz[],
-             const int p[]);
-
-  /**
-     @brief Getter for run values.
-   */
-  const vector<double>& getValNum() {
-    return valNum;
-  }
-
-  /**
-     @brief Getter for starting row offsets;
-   */
-  const vector<unsigned int>& getRowStart() {
-    return rowStart;
-  }
-
-  /**
-     @brief Getter for run lengths.
-   */
-  const vector<unsigned int> getRunLength() {
-    return runLength;
-  }
-
-
-  /**
-     @brief Getter for predictor starting offsets.
-   */
-  const vector<unsigned int> getPredStart() {
-    return predStart;
-  }
-};
-
-
-class BlockNumDense : public BlockNum {
-  double *feNumT;
- public:
-
-
- BlockNumDense(double *_feNumT,
-	       unsigned int _nCol) :
-  BlockNum(_nCol) {
-    feNumT = _feNumT;
-    blockNumT = _feNumT;
-  }
-
-
-  ~BlockNumDense() {
-  }
-
-  
-  /**
-     @brief Resets starting position to block within region previously
-     transposed.
-
-     @param rowStart is the first row of the block.
-
-     @param rowEnd is the sup row.  Unused here.
-
-     @return void.
-   */
-  inline void transpose(unsigned int rowStart, unsigned int rowEnd) {
-    blockNumT = feNumT + nCol * rowStart;
-  }
-};
-
-
-class BlockFac {
-  const unsigned int nCol;
-  unsigned int *feFac; // Factors, may or may not already be transposed.
-  unsigned int *blockFacT; // Iterator state.
-
- public:
-
-  /**
-     @brief Dense constructor:  currently pre-transposed.
-   */
- BlockFac(unsigned int *_feFacT,
-	  unsigned int _nCol) :
-  nCol(_nCol),
-    feFac(_feFacT) {
+             const int p[]) {
+  // Pre-scans column heights.
+    const ty zero = 0.0;
+    vector<unsigned int> nzHeight(nPred + 1);
+    unsigned int idxStart = p[0];
+    for (unsigned int colIdx = 1; colIdx <= nPred; colIdx++) {
+      nzHeight[colIdx - 1] = p[colIdx] - idxStart;
+      idxStart = p[colIdx];
     }
 
-  static BlockFac *Factory(unsigned int *_feFacT, unsigned int _nCol);
-  
-  /**
-     @brief Resets starting position to block within region previously
-     transposed.
-
-     @param rowStart is the first row of the block.
-
-     @param rowEnd is the sup row.  Unused here.
-   */
-  inline void transpose(unsigned int rowStart, unsigned int rowEnd) {
-    blockFacT = feFac + nCol * rowStart;
-  }
-
-
-  /**
-     @brief Computes the starting position of a row of transposed
-     predictor values.
-
-     @param rowOff is the buffer offset for the row.
-
-     @return pointer to beginning of transposed row.
-   */
-  inline const unsigned int *rowBase(unsigned int rowOff) const {
-    return blockFacT + rowOff * nCol;
-  }
-
-
-  /**
-     @brief Getter for column count.
-
-     @return value of nCol.
-   */
-  inline const unsigned int getNCol() const {
-    return nCol;
+    for (unsigned int colIdx = 0; colIdx < predStart.size(); colIdx++) {
+      unsigned int colHeight = nzHeight[colIdx]; // # nonzero values in column.
+      predStart[colIdx] = val.size();
+      if (colHeight == 0) { // No nonzero values for predictor.
+        pushRun(zero, nRow, 0);
+      }
+      else {
+        unsigned int nzPrev = nRow; // Inattainable row value.
+        // Row indices into 'i' and 'x' are zero-based.
+        unsigned int idxStart = p[colIdx];
+        unsigned int idxEnd = idxStart + colHeight;
+        for (unsigned int rowIdx = idxStart; rowIdx < idxEnd; rowIdx++) {
+          unsigned int nzRow = nz[rowIdx]; // row # of nonzero element.
+          if (nzPrev == nRow && nzRow > 0) { // Zeroes lead.
+            pushRun(zero, nzRow, 0);
+          }
+          else if (nzRow > nzPrev + 1) { // Zeroes precede.
+            pushRun(zero, nzRow - (nzPrev + 1), nzPrev + 1);
+          }
+          pushRun(eltsNZ[rowIdx], 1, nzRow);
+          nzPrev = nzRow;
+        }
+        if (nzPrev + 1 < nRow) { // Zeroes trail.
+          pushRun(zero, nRow - (nzPrev + 1), nzPrev + 1);
+        }
+      }
+    }
   }
 };
+
 
 #endif

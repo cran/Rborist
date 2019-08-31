@@ -13,8 +13,8 @@
    @author Mark Seligman
  */
 
-#ifndef ARBORIST_TRAIN_H
-#define ARBORIST_TRAIN_H
+#ifndef RF_TRAIN_H
+#define RF_TRAIN_H
 
 #include <string>
 #include <vector>
@@ -24,7 +24,7 @@
 /**
    @brief Short-lived bundle of objects created for training a block of trees.
  */
-typedef pair<shared_ptr<class Sample>, shared_ptr<class PreTree> > TrainSet;
+typedef pair<unique_ptr<class Sample>, unique_ptr<class PreTree> > TrainSet;
 
 /**
    @brief Interface class for front end.  Holds simulation-specific parameters
@@ -43,12 +43,9 @@ class Train {
   /**
      @brief Trains a chunk of trees.
 
-     @param frameTrain summarizes the predictor characteristics.
-
-     @param rankedPair contains the presorted observation statistics.
+     @param summaryFrame summarizes the predictor characteristics.
   */
-  void trainChunk(const class FrameTrain *frameTrain,
-                  const class RankedSet *rankedPair);
+  void trainChunk(const class SummaryFrame* frame);
 
   unique_ptr<class LFTrain> leaf; // Crescent leaf object.
 
@@ -57,18 +54,18 @@ public:
   /**
      @brief Regression constructor.
   */
-  Train(const class FrameTrain *frameTrain,
-        const double *y,
+  Train(const class SummaryFrame* frame,
+        const double* y,
         unsigned int treeChunk_);
 
   
   /**
      @brief Classification constructor.
   */
-  Train(const class FrameTrain *frameTrain,
-        const unsigned int *yCtg,
+  Train(const class SummaryFrame* frame,
+        const unsigned int* yCtg,
         unsigned int nCtg,
-        const double *yProxy,
+        const double* yProxy,
         unsigned int nTree,
         unsigned int treeChunk_);
 
@@ -165,7 +162,7 @@ public:
      @param regMono has length equal to the predictor count.  Only
      numeric predictors may have nonzero entries.
   */
-  static void initMono(const class FrameTrain* frameTrain,
+  static void initMono(const class SummaryFrame* frame,
                        const vector<double> &regMono);
 
   /**
@@ -174,15 +171,13 @@ public:
   static void deInit();
 
   static unique_ptr<Train> regression(
-       const class FrameTrain *frameTrain,
-       const class RankedSet *rankedPair,
+       const class SummaryFrame* summaryFrame,
        const double *y,
        unsigned int treeChunk);
 
 
   static unique_ptr<Train> classification(
-       const class FrameTrain *frameTrain,
-       const class RankedSet *rankedPair,
+       const class SummaryFrame* summaryFrame,
        const unsigned int *yCtg,
        const double *yProxy,
        unsigned int nCtg,
@@ -224,8 +219,7 @@ public:
 
      @return Wrapped collection of Sample, PreTree pairs.
   */
-  vector<TrainSet> blockProduce(const class FrameTrain *frameTrain,
-                                const class RowRank *rowRank,
+  vector<TrainSet> blockProduce(const class SummaryFrame* frame,
                                 unsigned int tStart,
                                 unsigned int tCount);
 

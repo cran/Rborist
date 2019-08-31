@@ -16,9 +16,11 @@
 
 #include "bv.h"
 #include "pretree.h"
-#include "splitcand.h"
+#include "ptnode.h"
+#include "decnode.h"
+#include "frontier.h"
 #include "forest.h"
-#include "framemap.h"
+#include "summaryframe.h"
 #include "callback.h"
 
 #include <queue>
@@ -41,9 +43,9 @@ size_t PreTree::leafMax = 0;
 
    @param _minH is the minimal splitable index node size.
 
-   @return void.
+   @param leafMax is a user-specified limit on the number of leaves.
  */
-void PreTree::immutables(size_t _nSamp, size_t _minH, size_t _leafMax) {
+void PreTree::immutables(size_t _nSamp, size_t _minH, size_t leafMax) {
   // Static initial estimate of pre-tree heights employs a minimal enclosing
   // balanced tree.  This is probably naive, given that decision trees
   // are not generally balanced.
@@ -60,7 +62,7 @@ void PreTree::immutables(size_t _nSamp, size_t _minH, size_t _leafMax) {
   // Terminals plus accumulated nonterminals.
   heightEst = (twoL << 2); // - 1, for exact count.
 
-  leafMax = _leafMax;
+  PreTree::leafMax = leafMax;
 }
 
 
@@ -76,16 +78,15 @@ void PreTree::deImmutables() {
 
    @return void.
  */
-PreTree::PreTree(const FrameTrain *frameTrain_,
-                 unsigned int bagCount_) :
-  frameTrain(frameTrain_),
-  bagCount(bagCount_),
-  nodeCount(heightEst), // Initial estimate.
+
+PreTree::PreTree(const SummaryFrame* frame,
+                 const Frontier* frontier) :
+  bagCount(frontier->getBagCount()),
   height(1),
   leafCount(1),
-  bitEnd(0) {
-  nodeVec = new PTNode[nodeCount];
-  splitBits = BitFactory();
+  bitEnd(0),
+  nodeVec(vector<PTNode>(2*bagCount - 1)), // Maximum possible nodes.
+  splitBits(new BV(heightEst * frame->getCardExtent())) { // Initial estimate.
 }
 
 
@@ -93,125 +94,47 @@ PreTree::PreTree(const FrameTrain *frameTrain_,
    @brief Per-tree finalizer.
  */
 PreTree::~PreTree() {
-  delete [] nodeVec;
   delete splitBits;
 }
 
 
-/**
-   @brief Sets specified bit in splitting bit vector.
-
-   @param id is the index node for which the LH bit is set.
-
-   @param pos is the bit position beyond to set.
-
-   @return void.
-*/
-void PreTree::LHBit(int idx, unsigned int pos) {
-  splitBits->setBit(nodeVec[idx].splitVal.offset + pos);
+void PreTree::setLeft(const IndexSet* iSet, IndexT pos) {
+  splitBits->setBit(pos + nodeVec[iSet->getPTId()].getBitOffset(splitCrit));
 }
 
 
-/**
-   @brief Refines the height estimate using the actual height of a
-   constructed PreTree.
-
-   @param height is an actual height value.
-
-   @return void.
- */
+IndexT PTNode::getBitOffset(const vector<SplitCrit>& splitCrit) const {
+  return splitCrit[critOffset].getBitOffset();
+}
+    
+    
 void PreTree::reserve(size_t height) {
   while (heightEst <= height) // Assigns next power-of-two above 'height'.
     heightEst <<= 1;
 }
 
 
-/**
-   @brief Allocates a zero-valued bit string for the current (pre)tree.
-
-   @return pointer to allocated vector, possibly zero-length.
-*/
-BV *PreTree::BitFactory() {
-  // Should be wide enough to hold all factor bits for an entire tree:
-  //    estimated #nodes * width of widest factor.
-  return new BV(nodeCount * frameTrain->getCardMax());
+void PreTree::nonterminal(double info, IndexSet* iSet) {
+  nodeVec[iSet->getPTId()].nonterminal(info, height - iSet->getPTId(), splitCrit.size());
+  terminalOffspring();
 }
 
 
-/**
-   @brief Fills in some fields for (generic) node found splitable.
-
-   @param _id is the node index.
-
-   @param _info is the information content.
-
-   @param _predIdx is the splitting predictor index.
-
-   @return void.
-*/
-void PreTree::branchFac(const SplitCand& argMax, unsigned int id) {
-  nodeVec[id].SplitFac(argMax.getPredIdx(), height - id, bitEnd, argMax.getInfo());
-  TerminalOffspring();
-  bitEnd += frameTrain->getFacCard(argMax.getPredIdx());
+void PreTree::critBits(const IndexSet* iSet, unsigned int predIdx, unsigned int cardinality) {
+  nodeVec[iSet->getPTId()].bumpCriterion();
+  splitCrit.emplace_back(predIdx, bitEnd);
+  bitEnd += cardinality;
+  splitBits = splitBits->Resize(bitEnd);
 }
 
 
-void PreTree::branchNum(const SplitCand &argMax, unsigned int id) {
-  nodeVec[id].splitNum(argMax, height - id);
-  TerminalOffspring();
+void PreTree::critCut(const IndexSet* iSet, unsigned int predIdx, const IndexRange& rankRange) {
+  nodeVec[iSet->getPTId()].bumpCriterion();
+  splitCrit.emplace_back(predIdx, rankRange);
 }
 
 
-void PTNode::splitNum(const SplitCand &cand, unsigned int lhDel) {
-  this->predIdx = cand.getPredIdx();
-  this->lhDel = lhDel;
-  this->splitVal.rankRange = cand.getRankRange();
-  this->info = cand.getInfo();
-}
-
-
-/**
-   @brief Ensures sufficient space to accomodate the next level for nodes
-   just split.  If necessary, doubles existing vector sizes.
-
-   N.B.:  reallocations incur considerable resynchronization costs if
-   precipitated from the coprocessor.
-
-   @param splitNext is the count of splits in the upcoming level.
-
-   @param leafNext is the count of leaves in the upcoming level.
-
-   @return current height;
-*/
-void PreTree::levelStorage(unsigned int splitNext, unsigned int leafNext) {
-  if (height + splitNext + leafNext > nodeCount) {
-    ReNodes();
-  }
-
-  unsigned int bitMin = bitEnd + splitNext * frameTrain->getCardMax();
-  if (bitMin > 0) {
-    splitBits = splitBits->Resize(bitMin);
-  }
-}
-
-
-/**
- @brief Guesstimates safe height by doubling high watermark.
-
- @return void.
-*/
-void PreTree::ReNodes() {
-  nodeCount <<= 1;
-  PTNode *PTtemp = new PTNode[nodeCount];
-  for (unsigned int i = 0; i < height; i++)
-    PTtemp[i] = nodeVec[i];
-
-  delete [] nodeVec;
-  nodeVec = PTtemp;
-}
-
-
-const vector<unsigned int> PreTree::consume(ForestTrain *forest, unsigned int tIdx, vector<double> &predInfo) {
+const vector<unsigned int> PreTree::consume(ForestTrain* forest, unsigned int tIdx, vector<double>& predInfo) {
   height = LeafMerge();
   forest->treeInit(tIdx, height);
   consumeNonterminal(forest, predInfo);
@@ -221,59 +144,31 @@ const vector<unsigned int> PreTree::consume(ForestTrain *forest, unsigned int tI
 }
 
 
-/**
-   @brief Consumes nonterminal information into the dual-use vectors needed by the decision tree.  Leaf information is post-assigned by the response-dependent Sample methods.
-
-   @param forest inputs/outputs the updated forest.
-
-   @return void, with output reference parameter.
-*/
 void PreTree::consumeNonterminal(ForestTrain *forest, vector<double> &predInfo) const {
   fill(predInfo.begin(), predInfo.end(), 0.0);
-  for (unsigned int idx = 0; idx < height; idx++) {
-    nodeVec[idx].consumeNonterminal(frameTrain, forest, predInfo, idx);
+  for (IndexT idx = 0; idx < height; idx++) {
+    nodeVec[idx].consumeNonterminal(forest, predInfo, idx, splitCrit);
   }
 }
 
 
-/**
-   @brief Consumes the node fields of nonterminals (splits).
-
-   @param forest outputs the growing forest node vector.
-
-   @return void, with side-effected Forest.
- */
-void PTNode::consumeNonterminal(const FrameTrain *frameTrain, ForestTrain *forest, vector<double> &predInfo, unsigned int idx) const {
+void PTNode::consumeNonterminal(ForestTrain* forest, vector<double>& predInfo, unsigned int idx, const vector<SplitCrit>& splitCrit) const {
   if (isNonTerminal()) {
-    forest->nonTerminal(frameTrain, idx, this);
-    predInfo[predIdx] += info;
+    SplitCrit crit(splitCrit[critOffset]);
+    forest->nonTerminal(idx, lhDel, crit);
+    predInfo[crit.predIdx] += info;
   }
 }
 
 
-/**
-   @brief Absorbs the terminal list from a completed subtree.
-
-   @param stTerm are subtree-relative indices.  These must be mapped to
-   sample indices if the subtree is proper.
-
-   @return void, with side-effected frontier map.
- */
-void PreTree::subtreeFrontier(const vector<unsigned int> &stTerm) {
+void PreTree::subtreeFrontier(const vector<unsigned int>& stTerm) {
   for (auto & stIdx : stTerm) {
     termST.push_back(stIdx);
   }
 }
 
 
-/**
-   @brief Constructs mapping from sample indices to leaf indices.
-
-   @param tIdx is the index of the tree being produced.
-
-   @return Reference to rewritten map, with side-effected Forest.
- */
-const vector<unsigned int> PreTree::frontierConsume(ForestTrain *forest) const {
+const vector<unsigned int> PreTree::frontierConsume(ForestTrain* forest) const {
   vector<unsigned int> frontierMap(termST.size());
   vector<unsigned int> pt2Leaf(height);
   fill(pt2Leaf.begin(), pt2Leaf.end(), height); // Inattainable leaf index.
@@ -292,11 +187,8 @@ const vector<unsigned int> PreTree::frontierConsume(ForestTrain *forest) const {
 }
 
 
-/**
-   @return BV-aligned length of used portion of split vector.
- */
-unsigned int PreTree::BitWidth() {
-  return BV::SlotAlign(bitEnd);
+unsigned int PreTree::getBitWidth() {
+  return BV::slotAlign(bitEnd);
 }
 
 
@@ -316,6 +208,9 @@ public:
 };
 
 
+/**
+   @brief Information-base comparator for queue ordering.
+*/
 class InfoCompare {
 public:
   bool operator() (const PTMerge &a , const PTMerge &b) {

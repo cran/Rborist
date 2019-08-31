@@ -8,7 +8,7 @@
 /**
    @file forest.cc
 
-   @brief Methods for building and walking the decision tree.
+   @brief Methods for building and walking the dec`ision tree.
 
    @author Mark Seligman
  */
@@ -16,9 +16,8 @@
 
 #include "bv.h"
 #include "forest.h"
-#include "block.h"
-#include "framemap.h"
-#include "rowrank.h"
+#include "summaryframe.h"
+#include "rankedframe.h"
 #include "predict.h"
 
 
@@ -55,33 +54,35 @@ unsigned int TreeNode::advance(const BVJagged *facSplit,
                                const unsigned int rowT[],
                                unsigned int tIdx,
                                unsigned int &leafIdx) const {
+  auto predIdx = getPredIdx();
   if (lhDel == 0) {
     leafIdx = predIdx;
     return 0;
   }
   else {
-    unsigned int bitOff = splitVal.offset + rowT[predIdx];
+    IndexType bitOff = getSplitBit() + rowT[predIdx];
     return facSplit->testBit(tIdx, bitOff) ? lhDel : lhDel + 1;
   }
 }
 
 
-unsigned int TreeNode::advance(const FramePredict *framePredict,
+unsigned int TreeNode::advance(const PredictFrame* blockFrame,
                                const BVJagged *facSplit,
                                const unsigned int *rowFT,
                                const double *rowNT,
                                unsigned int tIdx,
                                unsigned int &leafIdx) const {
+  auto predIdx = getPredIdx();
   if (lhDel == 0) {
     leafIdx = predIdx;
     return 0;
   }
   else {
     bool isFactor;
-    unsigned int blockIdx = framePredict->FacIdx(predIdx, isFactor);
+    unsigned int blockIdx = blockFrame->getIdx(predIdx, isFactor);
     return isFactor ?
-      (facSplit->testBit(tIdx, splitVal.offset + rowFT[blockIdx]) ?
-       lhDel : lhDel + 1) : (rowNT[blockIdx] <= splitVal.num ?
+      (facSplit->testBit(tIdx, getSplitBit() + rowFT[blockIdx]) ?
+       lhDel : lhDel + 1) : (rowNT[blockIdx] <= getSplitNum() ?
                              lhDel : lhDel + 1);
   }
 }
@@ -108,7 +109,6 @@ void NBCresc::treeInit(unsigned int tIdx, unsigned int nodeCount) {
   treeFloor = treeNode.size();
   height[tIdx] = treeFloor + nodeCount;
   TreeNode tn;
-  tn.init();
   treeNode.insert(treeNode.end(), nodeCount, tn);
 }
 
@@ -147,10 +147,10 @@ void FBCresc::appendBits(const BV* splitBits,
 }
 
 
-void ForestTrain::nonTerminal(const FrameTrain *frameTrain,
-                              unsigned int nodeIdx,
-                              const DecNode *decNode) {
-  nbCresc->branchProduce(nodeIdx, decNode, frameTrain->isFactor(decNode->predIdx));
+void ForestTrain::nonTerminal(IndexType nodeIdx,
+                              IndexType lhDel,
+                              const SplitCrit& crit) {
+  nbCresc->branchProduce(nodeIdx, lhDel, crit);
 }
 
 
@@ -160,26 +160,31 @@ void ForestTrain::terminal(unsigned int nodeIdx,
 }
 
 
-void ForestTrain::splitUpdate(const FrameTrain *frameTrain,
-                              const BlockRanked *numRanked) {
-  nbCresc->splitUpdate(frameTrain, numRanked);
+void ForestTrain::splitUpdate(const SummaryFrame *sf) {
+  nbCresc->splitUpdate(sf);
 }
 
 
-void NBCresc::splitUpdate(const FrameTrain* frameTrain,
-                          const BlockRanked* numRanked) {
+void NBCresc::splitUpdate(const SummaryFrame* sf) {
   for (auto & tn : treeNode) {
-    tn.splitUpdate(frameTrain, numRanked);
+    tn.setQuantRank(sf);
   }
 }
 
 
-void TreeNode::splitUpdate(const FrameTrain *frameTrain,
-                           const BlockRanked *numRanked) {
-  if (Nonterminal() && !frameTrain->isFactor(predIdx)) {
-    splitVal.num = numRanked->QuantRank(predIdx, splitVal.rankRange, splitQuant);
-  }
+void TreeNode::setQuantRank(const SummaryFrame* sf) {
+  auto predIdx = getPredIdx();
+  if (!Nonterminal() || sf->isFactor(predIdx))
+    return;
+
+  double rankNum = criterion.imputeRank(splitQuant[predIdx]);
+  IndexType rankFloor = floor(rankNum);
+  IndexType rankCeil = ceil(rankNum);
+  double valFloor = sf->getNumVal(predIdx, rankFloor);
+  double valCeil = sf->getNumVal(predIdx, rankCeil);
+  criterion.setNum(valFloor + (rankNum - rankFloor) * (valCeil - valFloor));
 }
+
 
 
 vector<size_t> Forest::cacheOrigin() const {
@@ -205,7 +210,7 @@ void Forest::dump(vector<vector<unsigned int> > &pred,
                   vector<vector<unsigned int> > &lhDel) const {
   for (unsigned int tIdx = 0; tIdx < nTree; tIdx++) {
     for (unsigned int nodeIdx = 0; nodeIdx < getNodeHeight(tIdx); nodeIdx++) {
-      pred[tIdx].push_back(treeNode[nodeIdx].getPred());
+      pred[tIdx].push_back(treeNode[nodeIdx].getPredIdx());
       lhDel[tIdx].push_back(treeNode[nodeIdx].getLHDel());
 
       // Not quite:  must distinguish numeric from bit-packed:

@@ -1,4 +1,4 @@
-# Copyright (C)  2012-2018   Mark Seligman
+# Copyright (C)  2012-2019   Mark Seligman
 ##
 ## This file is part of ArboristBridgeR.
 ##
@@ -36,11 +36,10 @@
                 predWeight = NULL, 
                 quantVec = NULL,
                 quantiles = !is.null(quantVec),
-                qBin = 5000,
                 regMono = NULL,
                 rowWeight = NULL,
                 splitQuant = NULL,
-                thinLeaves = FALSE,
+                thinLeaves = ifelse(is.factor(y), TRUE, FALSE),
                 treeBlock = 1,
                 verbose = FALSE,
                 withRepl = TRUE,
@@ -62,19 +61,19 @@
         stop("Expecting numeric or factor response")
 
     preFormat <- PreFormat(x, verbose)
-    predBlock <- preFormat$predBlock
+    predFrame <- preFormat$predFrame
 
     
   # Argument checking:
 
-    nRow <- predBlock$nRow
+    nRow <- predFrame$nRow
     if (length(y) != nRow)
         stop("Nonconforming design matrix and response")
 
     if (autoCompress < 0.0 || autoCompress > 1.0)
         stop("Autocompression plurality must be a percentage.")
     
-    nPred <- length(predBlock$signature$predMap)
+    nPred <- length(predFrame$signature$predMap)
 
     if (is.null(regMono)) {
         regMono <- rep(0.0, nPred)
@@ -92,7 +91,7 @@
     }
     if (length(splitQuant) != nPred)
         stop("Split quantile specification differs from predictor count.")
-    if (any(splitQuant > 1 || splitQuant < 0))
+    if (any(splitQuant > 1) || any(splitQuant < 0))
         stop("Split specification contains invalid quantile values.")
 
 
@@ -205,8 +204,8 @@
     # Replaces predictor frame with preformat summaries.
     # Updates argument list with new or recomputed parameters.
     argList$x <- NULL
-    argList$predBlock <- predBlock
-    argList$rankedSet <- preFormat$rankedSet
+    argList$predFrame <- predFrame
+    argList$summaryRLE <- preFormat$summaryRLE
     argList$nCtg <- nCtg
     argList$nSamp <- nSamp
     argList$predFixed <- predFixed
@@ -228,11 +227,11 @@ RFDeep <- function(argList) {
     train <- tryCatch(.Call("TrainRF", argList), error = function(e){stop(e)})
 
     predInfo <- train[["predInfo"]]
-    names(predInfo) <- argList$predBlock$colnames
+    names(predInfo) <- argList$predFrame$colnames
     training = list(
         call = match.call(),
         info = predInfo,
-        version = "0.1-17",
+        version = "0.2-0",
         diag = train[["diag"]]
     )
 
@@ -240,14 +239,14 @@ RFDeep <- function(argList) {
         validation <- NULL
     }
     else {
-        validation <- ValidateDeep(argList$predBlock, train, argList$y, argList$ctgCensus, argList$quantVec, argList$quantiles, argList$qBin, argList$nThread, argList$verbose)
+        validation <- ValidateDeep(argList$predFrame, train, argList$y, argList$ctgCensus, argList$quantVec, argList$quantiles, argList$nThread, argList$verbose)
     }
 
     arbOut <- list(
         bag = train$bag,
         forest = train$forest,
         leaf = train$leaf,
-        signature = argList$predBlock$signature,
+        signature = argList$predFrame$signature,
         training = training,
         validation = validation
     )

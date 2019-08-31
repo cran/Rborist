@@ -12,16 +12,16 @@
    trained tree levels.
 
    @author Mark Seligman
-
  */
 
-#ifndef ARBORIST_BOTTOM_H
-#define ARBORIST_BOTTOM_H
+#ifndef PARTITION_BOTTOM_H
+#define PARTITION_BOTTOM_H
 
 #include <deque>
 #include <vector>
 #include <map>
 
+#include "splitcoord.h"
 #include "typeparam.h"
 
 
@@ -29,21 +29,23 @@
    @brief Coordinates referencing most-recently restaged ancester (MRRA).
  */
 class RestageCoord {
-  SPPair mrra; // Level-relative coordinates of reaching ancestor.
+  SplitCoord mrra; // Level-relative coordinates of reaching ancestor.
   unsigned char del; // # levels back to referencing level.
-  unsigned char bufIdx; // buffer index of mrra's SamplePred.
+  unsigned char bufIdx; // buffer index of mrra's ObsPart.
  public:
 
-  void inline init(const SPPair &_mrra, unsigned int _del, unsigned int _bufIdx) {
-    mrra = _mrra;
-    del = _del;
-    bufIdx = _bufIdx;
+  RestageCoord(const SplitCoord& splitCoord,
+               unsigned int del_,
+               unsigned int bufIdx_) :
+    mrra(splitCoord),
+    del(del_),
+    bufIdx(bufIdx_) {
   }
 
-  void inline Ref(SPPair &_mrra, unsigned int &_del, unsigned int &_bufIdx) {
-    _mrra = mrra;
-    _del = del;
-    _bufIdx = bufIdx;
+  inline SplitCoord Ref(unsigned int &del, unsigned int &bufIdx) {
+    del = this->del;
+    bufIdx = this->bufIdx;
+    return mrra;
   }
 };
 
@@ -52,33 +54,32 @@ class RestageCoord {
    @brief Class managing the most recent level of the tree.
  */
 class Bottom {
+  const class SummaryFrame* frame;
   const unsigned int nPred; // Number of predictors.
   const unsigned int nPredFac; // Number of factor-valued predictors.
-  const unsigned int bagCount; // Count of uniquely-sampled rows.
 
   static constexpr double efficiency = 0.15; // Work efficiency threshold.
 
-  class IdxPath *stPath; // IdxPath accessed by subtree.
-  unsigned int splitPrev; // # nodes in previous level.
-  unsigned int splitCount; // # nodes in the level about to split.
-  const class FrameTrain *frameTrain;
-  const class RowRank *rowRank;
+  unique_ptr<class IdxPath> stPath; // IdxPath accessed by subtree.
+  IndexT splitPrev; // # nodes in previous level.
+  IndexT splitCount; // # nodes in the level about to split.
+  const class RankedFrame *rankedFrame;
   const unsigned int noRank;
 
   vector<unsigned int> history; // Current level's history.
   vector<unsigned int> historyPrev; // Previous level's history:  accum.
   vector<unsigned char> levelDelta; // # levels back split was defined.
   vector<unsigned char> deltaPrev; // Previous level's delta:  accum.
-  class Level *levelFront; // Current level.
+  deque<unique_ptr<class Level> > level; // Caches levels tracked by history.
   vector<unsigned int> runCount;
-  deque<class Level *> level; // However may levels are tracked by history.
   
   vector<RestageCoord> restageCoord;
 
   /**
      @brief General, multi-level restaging.
   */
-  void restage(class SamplePred *samplePred, RestageCoord &rsCoord);
+  void restage(const class SplitFrontier* splitFrontier,
+               RestageCoord &rsCoord);
 
   /**
      @brief Pushes first level's path maps back to all back levels
@@ -110,7 +111,8 @@ class Bottom {
 
      @param stageCount is a vector of per-predictor staging statistics.
   */
-  void rootDef(const vector<class StageCount>& stageCount);
+  void rootDef(const vector<class StageCount>& stageCount,
+               unsigned int bagCount);
 
   
   /**
@@ -125,8 +127,7 @@ class Bottom {
      @param bufIdx is the buffer in which the definition resides.
    */
   void scheduleRestage(unsigned int del,
-                       unsigned int mrraIdx,
-                       unsigned int predIdx,
+                       const SplitCoord& splitCoord,
                        unsigned int bufIdx);
 
 
@@ -137,9 +138,8 @@ class Bottom {
 
      @param splitCount specifies the number of splits to map.
   */
-  Bottom(const class FrameTrain* frameTrain_,
-         const class RowRank* rowRank_,
-         unsigned int bagCount_);
+  Bottom(const class SummaryFrame* frame,
+         unsigned int bagCount);
 
   /**
      @brief Class finalizer.
@@ -150,9 +150,8 @@ class Bottom {
   /**
      @brief Entry to restaging and candidate scheduling.
   */
-  void scheduleSplits(class SamplePred *samplePred,
-                      class SplitNode* splitNode,
-                      class IndexLevel *index);
+  void scheduleSplits(class SplitFrontier* splitFrontier,
+                      class Frontier *index);
 
   
   /**
@@ -168,6 +167,7 @@ class Bottom {
      @param nodeRel is true iff the indexing regime is node-relative.
   */
   void overlap(unsigned int splitNext,
+               unsigned int bagCount,
                unsigned int idxLive,
                bool nodeRel);
 
@@ -187,11 +187,10 @@ class Bottom {
 
      @param path is a unique path identifier.
   */
-  void reachingPath(unsigned int levelIdx,
-                    unsigned int parIdx,
-                    unsigned int start,
-                    unsigned int extent,
-                    unsigned int relBase,
+  void reachingPath(IndexT levelIdx,
+                    IndexT parIdx,
+                    const IndexRange& bufRange,
+                    IndexT relBase,
                     unsigned int path);
   
   /**
@@ -208,7 +207,7 @@ class Bottom {
 
      @param samplePred contains the compressed observation set.
   */
-  void restage(class SamplePred *samplePred);
+  void restage(const class SplitFrontier* splitFrontier);
 
 
   /**
@@ -253,7 +252,7 @@ class Bottom {
 
      @param stIdx is the subtree-relatlive index.
   */
-  void setExtinct(unsigned int stIdx);
+  void setExtinct(IndexT stIdx);
 
 
   /**
@@ -264,14 +263,14 @@ class Bottom {
 
      @param stIdx is the subtree-relative index.
   */
-  void setExtinct(unsigned int nodeIdx, unsigned int stIdx);
+  void setExtinct(unsigned int nodeIdx, IndexT stIdx);
 
   
   /**
      @brief Accessor for 'stPath' field.
    */
-  class IdxPath *subtreePath() const {
-    return stPath;
+  class IdxPath *getSubtreePath() const {
+    return stPath.get();
   }
   
 
@@ -298,23 +297,9 @@ class Bottom {
   /**
      @brief Flips source bit if a definition reaches to current level.
   */
-  void addDef(unsigned int reachIdx,
-              unsigned int predIdx,
+  void addDef(const SplitCoord& splitCoord,
               unsigned int bufIdx,
               bool singleton);
-
-  
-  /**
-     @brief Determines whether a pair references a singleton.
-
-     @param levelIdx is the level-relative node index.
-
-     @param predIdx is the predictor index.
-
-     @return true iff the pair is a singleton.
-   */
-  bool isSingleton(unsigned int levelIdx, unsigned int predIdx) const;
-
 
   /**
      @brief Sets pair as singleton at the front level.
@@ -323,20 +308,9 @@ class Bottom {
 
      @param predIdx is the predictor index.
   */
-  void setSingleton(unsigned int levelIdx, unsigned int predIdx) const;
+  void setSingleton(const SplitCoord& splitCoord) const;
 
 
-  /**
-     @brief Invokes dense-value adjustment from front level.
-
-     @return 
-  */
-  unsigned int adjustDense(unsigned int levelIdx,
-                           unsigned int predIdx,
-                           unsigned int &startIdx,
-                           unsigned int &extent) const;
-
-  
   /**
      @brief Looks up front path belonging to a back level.
 
@@ -375,7 +349,7 @@ class Bottom {
    */
   inline class Level *reachLevel(unsigned int levelIdx,
                                  unsigned int predIdx) const {
-    return level[levelDelta[levelIdx * nPred + predIdx]];
+    return level[levelDelta[levelIdx * nPred + predIdx]].get();
   }
 
 
@@ -397,17 +371,16 @@ class Bottom {
      Singleton iff (dense and all indices implicit) or (not dense and all
      indices have identical rank).
   */
-  inline void setRunCount(unsigned int splitIdx,
-                          unsigned int predIdx,
+  inline void setRunCount(const SplitCoord& splitCoord,
                           bool hasImplicit,
                           unsigned int rankCount) {
     unsigned int rCount = rankCount + (hasImplicit ? 1 : 0);
     if (rCount == 1) {
-      setSingleton(splitIdx, predIdx);
+      setSingleton(splitCoord);
     }
 
     unsigned int facStride;
-    if (factorStride(predIdx, splitIdx, facStride)) {
+    if (factorStride(splitCoord.predIdx, splitCoord.nodeIdx, facStride)) {
       runCount[facStride] = rCount;
     }
   }
@@ -422,10 +395,9 @@ class Bottom {
 
      @return run count associated with the node, if factor, otherwise zero.
    */
-  inline unsigned int getRunCount(unsigned int splitIdx,
-                               unsigned int predIdx) const {
+  inline unsigned int getRunCount(const SplitCoord& splitCoord) const {
     unsigned int facStride;
-    return factorStride(predIdx, splitIdx, facStride) ? runCount[facStride] : 0;
+    return factorStride(splitCoord.predIdx, splitCoord.nodeIdx, facStride) ? runCount[facStride] : 0;
   }
 };
 

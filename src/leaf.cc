@@ -15,6 +15,7 @@
 
 #include "leaf.h"
 #include "sample.h"
+#include "bag.h"
 #include "bv.h"
 #include "ompthread.h"
 
@@ -22,15 +23,17 @@
 
 
 LeafFrameReg::LeafFrameReg(const unsigned int height[],
-                 unsigned int nTree_,
-                 const Leaf leaf[],
-                 const unsigned int bagHeight[],
-                 const class BagSample bagSample[],
-                 const double *yTrain_,
-                 double meanTrain_,
-                 unsigned int rowPredict) :
+                           unsigned int nTree_,
+                           const Leaf leaf[],
+                           const unsigned int bagHeight[],
+                           const class BagSample bagSample[],
+                           const double *yTrain_,
+                           size_t rowTrain_,
+                           double meanTrain_,
+                           unsigned int rowPredict) :
   LeafFrame(height, nTree_, leaf, bagHeight, bagSample),
   yTrain(yTrain_),
+  rowTrain(rowTrain_),
   meanTrain(meanTrain_),
   offset(leafBlock->setOffsets()), // leafCount
   defaultScore(MeanTrain()),
@@ -130,12 +133,12 @@ vector<size_t> LeafBlock::setOffsets() const {
 }
 
 
-void LeafFrame::dump(const BitMatrix* baggedRows,
-                     vector< vector<unsigned int> > &rowTree,
+void LeafFrame::dump(const Bag* bag,
+                     vector< vector<size_t> > &rowTree,
                      vector< vector<unsigned int> > &sCountTree,
                      vector<vector<double> >& scoreTree,
                      vector<vector<unsigned int> >& extentTree) const {
-  blBlock->dump(baggedRows, rowTree, sCountTree);
+  blBlock->dump(bag, rowTree, sCountTree);
   leafBlock->dump(scoreTree, extentTree);
 }
 
@@ -152,10 +155,11 @@ void LeafBlock::dump(vector<vector<double> >& score,
 }
 
 
-void BLBlock::dump(const BitMatrix* baggedRows,
-                   vector<vector<unsigned int> >& rowTree,
+void BLBlock::dump(const Bag* bag,
+                   vector<vector<size_t> >& rowTree,
                    vector<vector<unsigned int> >& sCountTree) const {
   size_t bagIdx = 0;
+  const BitMatrix* baggedRows(bag->getBitMatrix());
   for (auto tIdx = 0ul; tIdx < raw->getNMajor(); tIdx++) {
     for (auto row = 0ul; row < baggedRows->getStride(); row++) {
       if (baggedRows->testBit(tIdx, row)) {
@@ -167,11 +171,35 @@ void BLBlock::dump(const BitMatrix* baggedRows,
 }
                                                             
 
+vector<RankCount> LeafFrameReg::setRankCount(const BitMatrix* baggedRows,
+                               const vector<unsigned int>& row2Rank) const {
+  vector<RankCount> rankCount(blBlock->size());
+  if (baggedRows->isEmpty())
+    return rankCount; // Short circuits with empty vector.
+
+  vector<unsigned int> leafSeen(leafCount());
+  fill(leafSeen.begin(), leafSeen.end(), 0);
+  unsigned int bagIdx = 0;  // Absolute sample index.
+  for (unsigned int tIdx = 0; tIdx < nTree; tIdx++) {
+    for (unsigned int row = 0; row < rowTrain; row++) {
+      if (baggedRows->testBit(tIdx, row)) {
+        unsigned int leafAbs = getLeafAbs(tIdx, bagIdx);
+        unsigned int sIdx = offset[leafAbs] + leafSeen[leafAbs]++;
+        rankCount[sIdx].init(row2Rank[row], getSCount(bagIdx));
+        bagIdx++;
+      }
+    }
+  }
+
+  return rankCount;
+}
+
+
 void LeafFrameReg::scoreBlock(const unsigned int* predictLeaves,
-                              unsigned int rowStart,
-                              unsigned int rowEnd) {
+                              size_t rowStart,
+                              size_t extent) {
   OMPBound blockRow;
-  OMPBound blockSup = (OMPBound) (rowEnd - rowStart);
+  OMPBound blockSup = (OMPBound) extent;
 
 #pragma omp parallel default(shared) private(blockRow) num_threads(OmpThread::nThread)
   {
@@ -198,10 +226,10 @@ void LeafBlock::scoreAcross(const unsigned int* predictLeaves, double defaultSco
 
 // Scores each row independently, in parallel.
 void LeafFrameCtg::scoreBlock(const unsigned int* predictLeaves,
-                              unsigned int rowStart,
-                              unsigned int rowEnd) {
+                              size_t rowStart,
+                              size_t extent) {
   OMPBound blockRow;
-  OMPBound blockSup = (OMPBound) (rowEnd - rowStart);
+  OMPBound blockSup = (OMPBound) extent;
 // TODO:  Recast loop by blocks, to avoid
 // false sharing.
 #pragma omp parallel default(shared) private(blockRow) num_threads(OmpThread::nThread)
@@ -298,13 +326,13 @@ void LeafFrameCtg::vote() {
 }
 
 
-void LeafFrameCtg::dump(const BitMatrix *baggedRows,
-                        vector<vector<unsigned int> > &rowTree,
+void LeafFrameCtg::dump(const Bag* bag,
+                        vector<vector<size_t> > &rowTree,
                         vector<vector<unsigned int> > &sCountTree,
                         vector<vector<double> > &scoreTree,
                         vector<vector<unsigned int> > &extentTree,
                         vector<vector<double> > &probTree) const {
-  LeafFrame::dump(baggedRows, rowTree, sCountTree, scoreTree, extentTree);
+  LeafFrame::dump(bag, rowTree, sCountTree, scoreTree, extentTree);
   ctgProb->dump(probTree);
 }
 
@@ -454,7 +482,6 @@ void LBCresc::treeInit(const vector<unsigned int> &leafMap,
   treeFloor = leaf.size();
   height[tIdx] = treeFloor + leafCount;
   Leaf init;
-  init.init();
   leaf.insert(leaf.end(), leafCount, init);
 }
 
@@ -484,10 +511,10 @@ void LFTrainReg::setScores(const Sample* sample, const vector<unsigned int>& lea
 }
 
 
-shared_ptr<Sample> LFTrainReg::rootSample(const RowRank* rowRank,
+unique_ptr<Sample> LFTrainReg::rootSample(const SummaryFrame* frame,
                                           BitMatrix* bag,
                                           unsigned int tIdx) const {
-  return Sample::factoryReg(y, rowRank, bag->BVRow(tIdx).get());
+  return Sample::factoryReg(y, frame, bag->BVRow(tIdx).get());
 }
 
 
@@ -517,10 +544,10 @@ void LFTrainCtg::setScores(const Sample* sample,
 }
 
 
-shared_ptr<Sample> LFTrainCtg::rootSample(const RowRank* rowRank,
+unique_ptr<Sample> LFTrainCtg::rootSample(const SummaryFrame* frame,
                                           BitMatrix* bag,
                                           unsigned int tIdx) const {
-  return Sample::factoryCtg(y, rowRank, &yCtg[0], bag->BVRow(tIdx).get());
+  return Sample::factoryCtg(y, frame, &yCtg[0], bag->BVRow(tIdx).get());
 }
 
 
@@ -610,6 +637,6 @@ void BBCresc::dumpRaw(unsigned char blRaw[]) const {
   }
 }
 
-void LFTrainCtg::dumpProb(double probOut[]) const {
+void LFTrainCtg::dumpWeight(double probOut[]) const {
   probCresc->dump(probOut);
 }

@@ -13,12 +13,12 @@
    @author Mark Seligman
  */
 
-#ifndef ARBORIST_LEAF_H
-#define ARBORIST_LEAF_H
+#ifndef CORE_LEAF_H
+#define CORE_LEAF_H
 
-#include "typeparam.h"
 #include "jagged.h"
 #include "sample.h"
+#include "typeparam.h"
 
 #include <vector>
 #include "math.h"
@@ -32,16 +32,14 @@ class Leaf {
   
  public:
 
-  inline void init() {
-    score = 0.0;
-    extent = 0;
+  Leaf() : score(0.0), extent(0) {
   }
 
   
   /**
      @brief Getter for fully-accumulated extent value.
    */
-  inline unsigned int getExtent() const {
+  inline auto getExtent() const {
     return extent;
   }
 
@@ -99,16 +97,16 @@ class BagSample {
   }
   
   BagSample(unsigned int leafIdx_,
-          unsigned int sCount_) : leafIdx(leafIdx_), sCount(sCount_) {
+            unsigned int sCount_) : leafIdx(leafIdx_), sCount(sCount_) {
   }
 
-  
-  inline unsigned int getLeafIdx() const {
+
+  inline auto getLeafIdx() const {
     return leafIdx;
   }
 
   
-  inline unsigned int getSCount() const {
+  inline auto getSCount() const {
     return sCount;
   }
 };
@@ -303,13 +301,13 @@ public:
   /**
      @brief Samples (bags) the response to construct the tree root.
 
-     @param rowRank summarizes the predictor orderings.
+     @param frame summarizes the predictor orderings.
 
      @param treeBag encodes the bagged rows.
 
      @param tIdx is the block-relative tree index.
    */
-  virtual shared_ptr<class Sample> rootSample(const class RowRank* rowRank,
+  virtual unique_ptr<class Sample> rootSample(const class SummaryFrame* frame,
                                               class BitMatrix* bag,
                                               unsigned int tIdx) const = 0;
 
@@ -327,6 +325,10 @@ public:
                         const vector<unsigned int>& leafMap,
                         unsigned int tIdx);
 
+  virtual void dumpWeight(double weightOut[]) const = 0;
+
+  virtual size_t getWeightSize() const = 0;
+  
   /**
      @brief Appends this tree's leaves to the current block.
 
@@ -388,7 +390,7 @@ public:
   /**
      @brief Samples response of current tree.
 
-     @param rowRank summarizes the presorted observations.
+     @param frame summarizes the presorted observations.
 
      @param bag summarizes the in-bag rows for a collection of trees.
 
@@ -396,9 +398,22 @@ public:
 
      @return summary of sampled response.
    */
-  shared_ptr<class Sample> rootSample(const class RowRank* rowRank,
+  unique_ptr<class Sample> rootSample(const class SummaryFrame* frame,
                                       class BitMatrix* bag,
                                       unsigned int tIdx) const;
+
+  /**
+     @brief Returns zero, indicating no weight matrix for this class.
+   */
+  size_t getWeightSize() const {
+    return 0;
+  }
+
+  /**
+     @brief Dummy:  no weight matrix.
+   */
+  void dumpWeight(double weightOut[]) const {
+  }
 };
 
 
@@ -529,19 +544,19 @@ public:
 
      @param[out] probOut exports the dumped values.
    */
-  void dumpProb(double probOut[]) const;
+  void dumpWeight(double probOut[]) const;
 
   /**
      @brief Gets the size of the probability vector.
    */
-  inline size_t getProbSize() const {
+  size_t getWeightSize() const {
     return probCresc->size();
   }
 
   /**
      @brief Samples response of current tree.
 
-     @param rowRank summarizes the presorted observations.
+     @param frame summarizes the presorted observations.
 
      @param bag summarizes the in-bag rows for a collection of trees.
 
@@ -549,7 +564,7 @@ public:
 
      @return summary of sampled response.
    */
-  shared_ptr<class Sample> rootSample(const class RowRank* rowRank,
+  unique_ptr<class Sample> rootSample(const class SummaryFrame* frame,
                                       class BitMatrix* bag,
                                       unsigned int tIdx) const;
 };
@@ -631,7 +646,7 @@ public:
 
      @param tIdx is the tree index.
 
-     @param leafIdx is the leaf index.
+     @param leafIdx is a tree-local leaf index.
 
      @return absolute offset of leaf.
    */
@@ -669,8 +684,8 @@ public:
 
      @return extent value.
    */
-  const unsigned int getExtent(unsigned int leafIdx) const {
-    return raw->items[leafIdx].getExtent();
+  const unsigned int getExtent(unsigned int leafAbs) const {
+    return raw->items[leafAbs].getExtent();
   }
 
 
@@ -694,7 +709,7 @@ class BLBlock {
 
 public:
   BLBlock(const unsigned int nTree_,
-          const unsigned int*height_,
+          const unsigned int* height_,
           const BagSample* bagSample_);
 
   /**
@@ -705,24 +720,28 @@ public:
   }
 
 
-  void dump(const class BitMatrix* baggedRows,
-            vector<vector<unsigned int> >& rowTree,
+  void dump(const class Bag* bag,
+            vector<vector<size_t> >& rowTree,
             vector<vector<unsigned int> >& sCountTree) const;
 
 
   /**
      @brief Index-parametrized sample-count getter.
    */
-  const unsigned int getSCount(unsigned int idx) const {
-    return raw->items[idx].getSCount();
+  const unsigned int getSCount(unsigned int absOff) const {
+    return raw->items[absOff].getSCount();
   };
 
 
   /**
      @brief Index-parametrized leaf-index getter.
+
+     @param absOff is the forest-relative bag offset.
+
+     @return associated tree-relative leaf index.
    */
-  const unsigned int getLeafIdx(unsigned int idx) const {
-    return raw->items[idx].getLeafIdx();
+  const unsigned int getLeafIdx(unsigned int absOff) const {
+    return raw->items[absOff].getLeafIdx();
   };
 };
 
@@ -746,7 +765,7 @@ public:
   const size_t noLeaf; // Inattainable leaf index value.
 
   virtual ~LeafFrame() {}
-  virtual const unsigned int rowPredict() const = 0;
+  virtual const unsigned int getRowPredict() const = 0;
 
   /**
      @brief Sets scores for a block of rows.
@@ -755,11 +774,11 @@ public:
 
      @param rowStart is the beginning row index.
 
-     @param rowEnd is the final row index.
+     @param extent is the number of rows indexed.
   */
   virtual void scoreBlock(const unsigned int* predictLeaves,
-                          unsigned int rowStart,
-                          unsigned int rowEnd) = 0;
+                          size_t rowStart,
+                          size_t extent) = 0;
 
   /**
      @brief Accessor for # trees in forest.
@@ -768,21 +787,36 @@ public:
     return nTree;
   }
 
-  
+
   /**
-     @brief Accessor for #samples at a given index.
+     @brief Accessor for #samples at an absolute bag index.
    */
-  inline unsigned int getSCount(unsigned int sIdx) const {
-    return blBlock->getSCount(sIdx);
+  inline unsigned int getSCount(unsigned int bagIdx) const {
+    return blBlock->getSCount(bagIdx);
+  }
+
+
+  /**
+     @param absSIdx is an absolute bagged sample index.
+
+     @return tree-relative leaf index of bagged sample.
+   */
+  inline auto getLeafLoc(unsigned int absSIdx) const {
+    return blBlock->getLeafIdx(absSIdx);
   }
 
   /**
-     @brief Computes sum of all bag sizes.
+     @brief Accessor for forest-relative leaf index .
 
-     @return size of information vector, which represents all bagged samples.
-  */
-  inline unsigned int bagSampleTot() const {
-    return blBlock->size();
+     @param tIdx is the tree index.
+
+     @param absSIdx is a forest-relative sample index.
+
+     @return forest-relative leaf index.
+   */
+  inline unsigned int getLeafAbs(unsigned int tIdx,
+                                 unsigned int absSIdx) const {
+    return leafBlock->absOffset(tIdx, getLeafLoc(absSIdx));
   }
 
 
@@ -810,16 +844,34 @@ public:
   /**
      @brief Dumps block components into separate tree-based vectors.
    */
-  void dump(const class BitMatrix *baggedRows,
-            vector< vector<unsigned int> > &rowTree,
-            vector< vector<unsigned int> > &sCountTree,
+  void dump(const class Bag* bag,
+            vector< vector<size_t> >& rowTree,
+            vector< vector<unsigned int> >& sCountTree,
             vector<vector<double> >& scoreTree,
             vector<vector<unsigned int> >& extentTree) const;
 };
 
 
+/**
+   @brief Rank and sample-counts associated with bagged rows.
+
+   Client:  quantile inference.
+ */
+struct RankCount {
+  IndexT rank; // Training rank of row.
+  unsigned int sCount; // # times row sampled.
+
+  void init(unsigned int rank,
+            unsigned int sCount) {
+    this->rank = rank;
+    this->sCount = sCount;
+  }
+};
+
+
 class LeafFrameReg : public LeafFrame {
   const double *yTrain;
+  const size_t rowTrain;
   const double meanTrain; // Mean of training response.
   const vector<size_t> offset; // Accumulated extents.
   double defaultScore;
@@ -827,23 +879,32 @@ class LeafFrameReg : public LeafFrame {
   
  public:
   LeafFrameReg(const unsigned int nodeHeight_[],
-          unsigned int nTree_,
-          const class Leaf leaf_[],
-          const unsigned int bagHeight_[],
-          const class BagSample bagSample_[],
-          const double *yTrain_,
-          double meanTrain_,
-          unsigned int rowPredict_);
+               unsigned int nTree_,
+               const class Leaf leaf_[],
+               const unsigned int bagHeight_[],
+               const class BagSample bagSample_[],
+               const double *yTrain_,
+               size_t rowTrain,
+               double meanTrain_,
+               unsigned int rowPredict_);
 
   ~LeafFrameReg() {}
 
   /**
-     @brief Accesor for training response.
+     @brief Accesor for training response, by row.
 
-     @return pointer to base of training response vector.
+     @return training value at row.
    */
-  inline const double *getYTrain() const {
+  inline const double* getYTrain() const {
     return yTrain;
+  }
+
+
+  /**
+     @brief Accessor for training response length.
+   */
+  inline const size_t getRowTrain() const {
+    return rowTrain;
   }
 
 
@@ -855,6 +916,11 @@ class LeafFrameReg : public LeafFrame {
   const vector<double> &getYPred() const {
     return yPred;
   }
+
+  
+  inline const double getYPred(unsigned int row) const {
+    return yPred[row];
+  }
   
 
   /**
@@ -862,7 +928,7 @@ class LeafFrameReg : public LeafFrame {
 
      @return size of prediction vector.
    */
-  const unsigned int rowPredict() const {
+  const unsigned int getRowPredict() const {
     return yPred.size();
   }
 
@@ -871,53 +937,46 @@ class LeafFrameReg : public LeafFrame {
     return meanTrain;
   }
 
+
   /**
      @brief Description given in virtual declaration.
    */
   void scoreBlock(const unsigned int* predictLeaves,
-                  unsigned int rowStart,
-                  unsigned int rowEnd);
+                  size_t rowStart,
+                  size_t extent);
   
   /**
      @brief Computes bag index bounds in forest setting (Quant only).
 
      @param tIdx is the absolute tree index.
 
-     @param leafIdx is the block-relative leaf index.
+     @param leafIdx is the tree-relative leaf index.
 
      @param[out] start outputs the staring sample offset.
 
      @param[out] end outputs the final sample offset. 
   */
-  void bagBounds(unsigned int tIdx,
-                 unsigned int leafIdx,
-                 unsigned int &start,
-                 unsigned int &end) const {
-    auto absIdx = leafBlock->absOffset(tIdx, leafIdx);
-    start = offset[absIdx];
-    end = start + leafBlock->getExtent(absIdx);
+  inline void bagBounds(unsigned int tIdx,
+                        unsigned int leafIdx,
+                        unsigned int &start,
+                        unsigned int &end) const {
+    auto leafAbs = leafBlock->absOffset(tIdx, leafIdx);
+    start = offset[leafAbs];
+    end = start + leafBlock->getExtent(leafAbs);
   }
-
+  
 
   /**
-     @brief Derives an absolute leaf index for a given tree and
-     bag index.
-     
-     @param tIdx is a tree index.
+     @brief Builds row-ordered mapping of leaves to rank/count pairs.
 
-     @param bagIdx is an absolute index of a bagged row.
+     @param baggedRows encodes the forest-wide tree bagging.
 
-     @param[out] offset_ outputs the absolute extent offset.
+     @param row2Rank is the ranked training outcome.
 
-     @return absolute index of leaf containing the bagged row.
+     @return per-leaf vector expressing mapping.
    */
-  unsigned int getLeafIdx(unsigned int tIdx,
-                          unsigned int bagIdx,
-                          unsigned int &offset_) const {
-    auto leafIdx = leafBlock->treeBase(tIdx) + blBlock->getLeafIdx(bagIdx);
-    offset_ = offset[leafIdx];
-    return leafIdx;
-  }
+  vector<RankCount> setRankCount(const class BitMatrix* baggedRows,
+                                 const vector<IndexT>& row2Rank) const;
 };
 
 
@@ -1069,10 +1128,16 @@ class LeafFrameCtg : public LeafFrame {
     return yPred;
   }
 
+
+  const unsigned int getYPred(size_t row) {
+    return yPred[row];
+  }
+  
+
   /**
      @brief Getter for number of rows to predict.
    */
-  const unsigned int rowPredict() const {
+  const unsigned int getRowPredict() const {
     return yPred.size();
   }
 
@@ -1080,14 +1145,14 @@ class LeafFrameCtg : public LeafFrame {
   /**
      @brief Getter for census.
    */
-  const unsigned int *Census() const {
+  const unsigned int* getCensus() const {
     return &census[0];
   }
 
   /**
      @brief Getter for probability matrix.
    */
-  const vector<double> &Prob() const {
+  const vector<double>& getProb() const {
     return prob;
   }
   
@@ -1095,8 +1160,8 @@ class LeafFrameCtg : public LeafFrame {
      @brief Description given in virtual declartion.
    */
   void scoreBlock(const unsigned int* predictLeaves,
-                  unsigned int rowStart,
-                  unsigned int rowEnd);
+                  size_t rowStart,
+                  size_t extent);
 
   /**
      @brief Fills the vote table using predicted response.
@@ -1131,8 +1196,8 @@ class LeafFrameCtg : public LeafFrame {
   /**
      @brief Dumps bagging and leaf information into per-tree vectors.
    */
-  void dump(const BitMatrix *baggedRows,
-            vector<vector<unsigned int> > &rowTree,
+  void dump(const class Bag* bag,
+            vector<vector<size_t> > &rowTree,
             vector<vector<unsigned int> > &sCountTree,
             vector<vector<double> > &scoreTree,
             vector<vector<unsigned int> > &extentTree,

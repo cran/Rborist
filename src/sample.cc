@@ -16,9 +16,9 @@
 #include "sample.h"
 #include "bv.h"
 #include "callback.h"
-#include "rowrank.h"
-#include "splitnode.h"
-#include "samplepred.h"
+#include "summaryframe.h"
+#include "splitfrontier.h"
+#include "obspart.h"
 
 // Simulation-invariant values.
 //
@@ -34,10 +34,10 @@ void Sample::deImmutables() {
 }
 
 
-Sample::Sample(const RowRank* rowRank_) :
-  rowRank(rowRank_),
+Sample::Sample(const SummaryFrame* frame) :
+  frame(frame),
   ctgRoot(vector<SumCount>(SampleNux::getNCtg())),
-  row2Sample(vector<unsigned int>(rowRank->getNRow())),
+  row2Sample(vector<unsigned int>(frame->getNRow())),
   bagCount(0),
   bagSum(0.0) {
 }
@@ -111,28 +111,28 @@ unsigned int Sample::countSamples(vector<unsigned int>& idx,
   return nz;
 }
 
-shared_ptr<SampleCtg> Sample::factoryCtg(const double y[],
-                                         const RowRank *rowRank,
+unique_ptr<SampleCtg> Sample::factoryCtg(const double y[],
+                                         const SummaryFrame* frame,
                                          const unsigned int yCtg[],
                                          BV *treeBag) {
-  shared_ptr<SampleCtg> sampleCtg = make_shared<SampleCtg>(rowRank);
+  unique_ptr<SampleCtg> sampleCtg = make_unique<SampleCtg>(frame);
   sampleCtg->bagSamples(yCtg, y, treeBag);
 
   return sampleCtg;
 }
 
 
-shared_ptr<SampleReg> Sample::factoryReg(const double y[],
-                                         const RowRank *rowRank,
+unique_ptr<SampleReg> Sample::factoryReg(const double y[],
+                                         const SummaryFrame* frame,
                                          BV *treeBag) {
-  shared_ptr<SampleReg> sampleReg = make_shared<SampleReg>(rowRank);
+  unique_ptr<SampleReg> sampleReg = make_unique<SampleReg>(frame);
   sampleReg->bagSamples(y, treeBag);
 
   return sampleReg;
 }
 
 
-SampleReg::SampleReg(const RowRank *rowRank) : Sample(rowRank) {
+SampleReg::SampleReg(const SummaryFrame *frame) : Sample(frame) {
 }
 
 
@@ -144,15 +144,13 @@ void SampleReg::bagSamples(const double y[], BV *treeBag) {
 }
 
 
-unique_ptr<SplitNode> SampleReg::splitNodeFactory(const FrameTrain *frameTrain) const {
-  return rowRank->SPRegFactory(frameTrain, bagCount);
+unique_ptr<SplitFrontier> SampleReg::frontierFactory(const SummaryFrame* frame, class Frontier* frontier) const {
+  return make_unique<SFReg>(frame, frontier, this);
 }
 
 
-SampleCtg::SampleCtg(const RowRank* rowRank) : Sample(rowRank) {
+SampleCtg::SampleCtg(const SummaryFrame* frame) : Sample(frame) {
   SumCount scZero;
-  scZero.init();
-
   fill(ctgRoot.begin(), ctgRoot.end(), scZero);
 }
 
@@ -165,8 +163,8 @@ void SampleCtg::bagSamples(const unsigned int yCtg[], const double y[], BV *tree
 }
 
 
-unique_ptr<SplitNode> SampleCtg::splitNodeFactory(const FrameTrain *frameTrain) const {
-  return rowRank->SPCtgFactory(frameTrain, bagCount, SampleNux::getNCtg());
+unique_ptr<SplitFrontier> SampleCtg::frontierFactory(const SummaryFrame* frame, class Frontier* frontier) const {
+  return make_unique<SFCtg>(frame, frontier, this, SampleNux::getNCtg());
 }
 
 
@@ -180,7 +178,7 @@ void Sample::bagSamples(const double y[], const unsigned int yCtg[], BV *treeBag
   // Copies contents of sampled outcomes and builds mapping vectors.
   //
   fill(row2Sample.begin(), row2Sample.end(), bagCount);
-  const unsigned int slotBits = BV::SlotElts();
+  const unsigned int slotBits = BV::getSlotElts();
   unsigned int slot = 0;
   unsigned int sIdx = 0;
   for (unsigned int base = 0; base < nRow; base += slotBits, slot++) {
@@ -199,13 +197,13 @@ void Sample::bagSamples(const double y[], const unsigned int yCtg[], BV *treeBag
 }
 
 
-unique_ptr<SamplePred> Sample::predictors() const {
-  return rowRank->SamplePredFactory(bagCount);
+unique_ptr<ObsPart> Sample::predictors() const {
+  return make_unique<ObsPart>(frame, bagCount);
 }
 
 
-vector<StageCount> Sample::stage(SamplePred* samplePred) const {
-  return samplePred->stage(rowRank, sampleNode, this);
+vector<StageCount> Sample::stage(ObsPart* samplePred) const {
+  return samplePred->stage(frame->getRankedFrame(), sampleNode, this);
 }
 
 

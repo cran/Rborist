@@ -14,17 +14,17 @@
  */
 
 #include "coproc.h"
-#include "rowrank.h"
+#include "rankedframe.h"
 
 
-RowRank *RowRank::Factory(const Coproc *coproc,
-			  const FrameTrain *frameTrain,
-			  const unsigned int _feRow[],
-			  const unsigned int _feRank[],
+RankedFrame *RankedFrame::Factory(const Coproc *coproc,
+                                  unsigned int nRow,
+                                  const vector<unsigned int>& cardinality,
+                                  unsigned int nPred,
+                                  const RLEVal<unsigned int> feRLE_[],
 			  //		  const unsigned int *_numOffset,
 			  //const double *_numVal,
-			  const unsigned int _feRLE[],
-			  unsigned int _feRLELength,
-			  double _autoCompress) {
-  return new RowRank(frameTrain, _feRow, _feRank, /*_numOffset, _numVal,*/ _feRLE, _feRLELength, _autoCompress);
+                                  size_t _feRLELength,
+                                  double _autoCompress) {
+  return new RankedFrame(nRow, cardinality, nPred, feRLE_, _feRLELength, _autoCompress);
 }

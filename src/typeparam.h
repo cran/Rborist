@@ -6,7 +6,7 @@
  */
 
 /**
-   @file typetypeparam.h
+   @file typeparam.h
 
    @brief Definitions for parameterization of internal types and classes.
 
@@ -15,8 +15,8 @@
  */
 
 
-#ifndef ARBORIST_TYPEPARAM_H
-#define ARBORIST_TYPEPARAM_H
+#ifndef CORE_TYPEPARAM_H
+#define CORE_TYPEPARAM_H
 
 #include <memory>
 #include <utility>
@@ -29,23 +29,67 @@ typedef float FltVal;
 // Floating accumulator type, viz. arithmetic.
 typedef double FltAccum;
 
-struct RankRange {
-  unsigned int rankLow;
-  unsigned int rankHigh;
 
-  void set(unsigned int rankLow,
-           unsigned int rankHigh) {
-    this->rankLow = rankLow;
-    this->rankHigh = rankHigh;
+// Index type:  rows, samples, ranks, run counts.
+// Should be wide enough to accommodate values approaching # observations.
+typedef unsigned int IndexType; // EXIT
+typedef unsigned int IndexT; 
+
+// Predictor type:  columns, num runs, caridinalities.
+// Should accommodate values approaching # predictors or properties.
+typedef unsigned int PredictorT;
+
+// Low/extent pair definining range of indices.
+struct IndexRange {
+  IndexT idxLow;
+  IndexT idxExtent;
+
+  void set(IndexT idxLow,
+           IndexT extent) {
+    this->idxLow = idxLow;
+    this->idxExtent = extent;
+  }
+
+
+  void adjust(IndexT margin,
+              IndexT implicit) {
+    idxLow -= margin;
+    idxExtent -= implicit;
+  }
+
+
+  IndexT getStart() const {
+    return idxLow;
+  }
+  
+
+  
+  IndexT getExtent() const {
+    return idxExtent;
+  }
+
+
+  /**
+     @return end position.
+   */
+  IndexT getEnd() const {
+    return idxLow + idxExtent;
+  }
+
+
+  /**
+     @brief Interpolates an intermediate position.
+
+     @param scale should lie in [0.0, 1.0].
+
+     @return fractional scaled position.
+   */
+  double interpolate(double scale) const {
+    return idxLow + scale * idxExtent;
   }
 };
 
 
 typedef unsigned char PathT;
-
-/**
-   @brief Split/predictor coordinate pair.
- */
-typedef pair<unsigned int, unsigned int> SPPair;
 
 #endif

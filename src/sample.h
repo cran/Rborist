@@ -13,64 +13,15 @@
    @author Mark Seligman
  */
 
-#ifndef ARBORIST_SAMPLE_H
-#define ARBORIST_SAMPLE_H
+#ifndef CORE_SAMPLE_H
+#define CORE_SAMPLE_H
 
-#include <vector>
+#include "sumcount.h"
 #include "typeparam.h"
 
+#include <vector>
+
 #include "samplenux.h" // For now.
-
-
-/**
-   @brief Row sum / count record for categorical indices.
- */
-class SumCount {
-  double sum;
-  unsigned int sCount;
-
- public:
-  void init() {
-    sum = 0.0;
-    sCount = 0;
-  }
-
-  /**
-     @brief Dual accessor for sum and sample count values.
-
-     @param[out] sum_ outputs the sum of sampled values.
-
-     @param[out] sCount_ outputs the sample count.
-   */
-  inline void ref(double &sum_, unsigned int &sCount_) const {
-    sum_ = sum;
-    sCount_ = sCount;
-  }
-  
-
-  /**
-     @brief Accumulates running sum and sample-count values.
-
-     @param[in, out] _sum accumulates response sum over sampled indices.
-
-     @param[in, out] _sCount accumulates sample count.
-   */
-  inline void accum(double _sum, unsigned int _sCount) {
-    sum += _sum;
-    sCount += _sCount;
-  }
-
-
-  /**
-     @brief Subtracts contents of vector passed.
-
-     @param subtrahend is the value to subtract.
-   */
-  void decr(const SumCount &subtrahend) {
-    sum -= subtrahend.sum;
-    sCount -= subtrahend.sCount;
-  }
-};
 
 
 /**
@@ -94,7 +45,7 @@ class Sample {
 
   
  protected:
-  const class RowRank* rowRank; // Summary of ranked predictors.
+  const class SummaryFrame* frame; // Summary of ranked predictors.
   
   static unsigned int nSamp; // Number of row samples requested.
   vector<SampleNux> sampleNode; // Per-sample summary of values.
@@ -171,7 +122,7 @@ class Sample {
 
      @param y is a real-valued proxy for the training response.
 
-     @param rowRank summarizes the ranked observations.
+     @param frame summarizes the ranked observations.
 
      @param yCtg is the training response.
 
@@ -179,8 +130,8 @@ class Sample {
 
      @return new SampleCtg instance.
    */
-  static shared_ptr<class SampleCtg> factoryCtg(const double y[],
-                                                const class RowRank *rowRank,
+  static unique_ptr<class SampleCtg> factoryCtg(const double y[],
+                                                const class SummaryFrame *frame,
                                                 const unsigned int yCtg[],
                                                 class BV *treeBag);
 
@@ -189,17 +140,18 @@ class Sample {
 
      @param y is the training response.
 
-     @param rowRank summarizes the ranked observations.
+     @param frame summarizes the ranked observations.
 
      @param[out] treeBag outputs bit-encoded indicator of sampled rows.
 
      @return new SampleReg instance.
    */
-  static shared_ptr<class SampleReg>factoryReg(const double y[],
-                                               const class RowRank *rowRank,
+  static unique_ptr<class SampleReg>factoryReg(const double y[],
+                                               const class SummaryFrame *frame,
                                                class BV *treeBag);
   
-  virtual unique_ptr<class SplitNode> splitNodeFactory(const class FrameTrain *frameTrain) const = 0;
+
+  virtual unique_ptr<class SplitFrontier> frontierFactory(const class SummaryFrame* frame, class Frontier* frontier) const = 0;
 
   /**
      @brief Lights off static initializations needed for sampling.
@@ -218,9 +170,9 @@ class Sample {
   /**
      @brief Constructor.
 
-     @param rowRank summarizes predictor ranks by row.
+     @param frame summarizes predictor ranks by row.
    */
-  Sample(const class RowRank* rowRank_);
+  Sample(const class SummaryFrame* frame);
 
 
   virtual ~Sample();
@@ -231,15 +183,15 @@ class Sample {
 
      @return array of joined sample/predictor records.
   */
-  unique_ptr<class SamplePred> predictors() const;
+  unique_ptr<class ObsPart> predictors() const;
   
 
   /**
-     @brief Invokes RowRank staging methods and caches compression map.
+     @brief Invokes RankedFrame staging methods and caches compression map.
 
      @param samplePred summarizes the observations.
   */
-  vector<class StageCount> stage(class SamplePred* samplePred) const;
+  vector<class StageCount> stage(class ObsPart* samplePred) const;
 
 
   /**
@@ -335,9 +287,11 @@ class Sample {
 class SampleReg : public Sample {
 
  public:
-  SampleReg(const class RowRank* rowRank_);
+  SampleReg(const class SummaryFrame* frame);
   ~SampleReg();
-  unique_ptr<class SplitNode> splitNodeFactory(const FrameTrain *frameTrain) const;
+
+
+  unique_ptr<class SplitFrontier> frontierFactory(const class SummaryFrame* frame, class Frontier* frontier) const;
 
 
   /**
@@ -350,11 +304,8 @@ class SampleReg : public Sample {
   inline double addNode(double yVal,
                         unsigned int sCount,
                         unsigned int ctg) {
-    SampleNux sNode;
-    double ySum = sNode.init(yVal, sCount);
-    sampleNode.emplace_back(sNode);
-
-    return ySum;
+    sampleNode.emplace_back(yVal, sCount);
+    return sampleNode.back().getSum();
   }
   
 
@@ -375,10 +326,10 @@ class SampleReg : public Sample {
 class SampleCtg : public Sample {
 
  public:
-  SampleCtg(const class RowRank* rowRank_);
+  SampleCtg(const class SummaryFrame* frame);
   ~SampleCtg();
 
-  unique_ptr<class SplitNode> splitNodeFactory(const FrameTrain *frameTrain) const;
+  unique_ptr<class SplitFrontier> frontierFactory(const class SummaryFrame* frame, class Frontier* frontier) const;
 
   /**
      @brief Appends a sample summary record.
@@ -388,10 +339,9 @@ class SampleCtg : public Sample {
      @return sum of sampled response values.
    */
   inline double addNode(double yVal, unsigned int sCount, unsigned int ctg) {
-    SampleNux sNode;
-    double ySum = sNode.init(yVal, sCount, ctg);
-    sampleNode.emplace_back(sNode);
-    ctgRoot[ctg].accum(ySum, sCount);
+    sampleNode.emplace_back(yVal, sCount, ctg);
+    double ySum = sampleNode.back().getSum();
+    ctgRoot[ctg] += SumCount(ySum, sCount);
 
     return ySum;
   }

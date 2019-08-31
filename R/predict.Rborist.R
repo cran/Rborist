@@ -1,4 +1,4 @@
-# Copyright (C)  2012-2018   Mark Seligman
+# Copyright (C)  2012-2019   Mark Seligman
 ##
 ## This file is part of ArboristBridgeR.
 ##
@@ -15,7 +15,7 @@
 ## You should have received a copy of the GNU General Public License
 ## along with ArboristBridgeR.  If not, see <http://www.gnu.org/licenses/>.
 
-"predict.Rborist" <- function(object, newdata, yTest=NULL, quantVec = NULL, quantiles = !is.null(quantVec), qBin = 5000, ctgCensus = "votes", oob = FALSE, nThread = 0, verbose = FALSE, ...) {
+"predict.Rborist" <- function(object, newdata, yTest=NULL, quantVec = NULL, quantiles = !is.null(quantVec), ctgCensus = "votes", oob = FALSE, nThread = 0, verbose = FALSE, ...) {
   if (!inherits(object, "Rborist"))
     stop("object not of class Rborist")
   if (is.null(object$forest))
@@ -30,11 +30,11 @@
   if (quantiles && is.null(quantVec))
     quantVec <- DefaultQuantVec()
 
-  PredictDeep(object, newdata, yTest, quantVec, qBin, ctgCensus, oob, nThread, verbose)
+  PredictDeep(object, newdata, yTest, quantVec, ctgCensus, oob, nThread, verbose)
 }
 
 
-PredictDeep <- function(objTrain, newdata, yTest, quantVec, qBin, ctgCensus, oob, nThread, verbose) {
+PredictDeep <- function(objTrain, newdata, yTest, quantVec, ctgCensus, oob, nThread, verbose) {
   forest <- objTrain$forest
 
   if (is.null(forest$forestNode))
@@ -55,15 +55,15 @@ PredictDeep <- function(objTrain, newdata, yTest, quantVec, qBin, ctgCensus, oob
   
   # Checks test data for conformity with training data.
   sigTrain <- objTrain$signature
-  predBlock <- PredBlock(newdata, sigTrain)
+  predFrame <- PredFrame(newdata, sigTrain)
 
   leaf <- objTrain$leaf
   if (inherits(leaf, "LeafReg")) {
     if (is.null(quantVec)) {
-      prediction <- tryCatch(.Call("TestReg", predBlock, objTrain, yTest, oob, nThread), error = function(e) {stop(e)})
+      prediction <- tryCatch(.Call("TestReg", predFrame, objTrain, yTest, oob, nThread), error = function(e) {stop(e)})
     }
     else {
-      prediction <- tryCatch(.Call("TestQuant", predBlock, objTrain, quantVec, qBin, yTest, oob, nThread), error = function(e) {stop(e)})
+      prediction <- tryCatch(.Call("TestQuant", predFrame, objTrain, quantVec, yTest, oob, nThread), error = function(e) {stop(e)})
     }
   }
   else if (inherits(leaf, "LeafCtg")) {
@@ -71,10 +71,10 @@ PredictDeep <- function(objTrain, newdata, yTest, quantVec, qBin, ctgCensus, oob
       stop("Quantiles not supported for classifcation")
 
     if (ctgCensus == "votes") {
-      prediction <- tryCatch(.Call("TestVotes", predBlock, objTrain, yTest, oob, nThread), error = function(e) {stop(e)})
+      prediction <- tryCatch(.Call("TestVotes", predFrame, objTrain, yTest, oob, nThread), error = function(e) {stop(e)})
     }
     else if (ctgCensus == "prob") {
-      prediction <- tryCatch(.Call("TestProb", predBlock, objTrain, yTest, oob, nThread), error = function(e) {stop(e)})
+      prediction <- tryCatch(.Call("TestProb", predFrame, objTrain, yTest, oob, nThread), error = function(e) {stop(e)})
     }
     else {
       stop(paste("Unrecognized ctgCensus type:  ", ctgCensus))

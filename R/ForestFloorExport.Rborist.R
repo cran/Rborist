@@ -1,4 +1,4 @@
-# Copyright (C)  2012-2018  Mark Seligman
+# Copyright (C)  2012-2019  Mark Seligman
 ##
 ## This file is part of ArboristBridgeR.
 ##
@@ -16,10 +16,11 @@
 ## along with ArboristBridgeR.  If not, see <http://www.gnu.org/licenses/>.
 
 ForestFloorExport <- function(arbOut) {
+    .Deprecated("Export")
     UseMethod("ForestFloorExport")
 }
 
 
 "ForestFloorExport.Rborist" <- function(arbOut) {
-  return (tryCatch(.Call("ForestFloorExport", arbOut), error = function(e) {stop(e)}))
+  return (tryCatch(.Call("Export", arbOut), error = function(e) {stop(e)}))
 }
