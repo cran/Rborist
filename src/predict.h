@@ -31,7 +31,7 @@
    class is parametrized by two blocks instead of a more general frame.
  */
 class PredictFrame {
-  static constexpr size_t rowBlock = 0x2000; // Block size.
+  static const size_t rowBlock; // Block size.
   
   class Predict* predict;
   const unsigned int nTree;
@@ -105,11 +105,9 @@ public:
 
      @return lesser of internal parameter and number of observations.
    */
-  static inline size_t getBlockRows(size_t nRow) {
-    return min(nRow, rowBlock);
-  }
+  static size_t getBlockRows(size_t nRow);
 
-
+  
   /**
      @brief Dispatches prediction on a block of rows, by predictor type.
 

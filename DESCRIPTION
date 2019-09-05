@@ -1,8 +1,8 @@
 Package: Rborist
 Title: Extensible, Parallelizable Implementation of the Random Forest
         Algorithm
-Version: 0.2-0
-Date: 2019-8-27
+Version: 0.2-1
+Date: 2019-9-2
 Author: Mark Seligman
 Maintainer: Mark Seligman <mseligman@suiji.org>
 BugReports: https://github.com/suiji/Arborist/issues
@@ -17,6 +17,6 @@ Suggests: testthat, knitr, rmarkdown
 VignetteBuilder: knitr
 LinkingTo: Rcpp
 NeedsCompilation: yes
-Packaged: 2019-08-31 19:43:38 UTC; seligman
+Packaged: 2019-09-04 23:39:03 UTC; seligman
 Repository: CRAN
-Date/Publication: 2019-08-31 20:30:03 UTC
+Date/Publication: 2019-09-05 08:10:06 UTC
