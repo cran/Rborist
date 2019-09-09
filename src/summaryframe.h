@@ -41,15 +41,12 @@ class SummaryFrame {
 public:
 
   SummaryFrame(const struct RLEFrame* rleFrame,
-               double autoCompress,
+	       double autoCompress,
 	       bool enableCoproc,
 	       vector<string>& diag);
 
   
-  static unique_ptr<SummaryFrame> factory(const struct RLEFrame* rleFrame,
-					  double autocompress,
-					  bool enableCoproc,
-					  vector<string>& diag);
+  ~SummaryFrame();
 
   
   /**
@@ -57,13 +54,6 @@ public:
    */
   inline const RankedFrame* getRankedFrame() const {
     return rankedFrame.get();
-  }
-
-  /**
-     @brief Getter for numRanked.
-   */
-  inline const BlockJagged<double> *getNumRanked() const {
-    return numRanked.get();
   }
 
 

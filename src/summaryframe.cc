@@ -20,16 +20,15 @@
 
 #include <algorithm>
 
-unique_ptr<SummaryFrame> SummaryFrame::factory(const RLEFrame* rleFrame,
-					       double autoCompress,
-					       bool enableCoproc,
+
+/*unique_ptr<SummaryFrame> SummaryFrame::factory(const RLEFrame* rleFrame,
 					       vector<string>& diag) {
-  return make_unique<SummaryFrame>(rleFrame, autoCompress, enableCoproc, diag);
-}
+  return make_unique<SummaryFrame>(rleFrame, diag);
+  }*/
 
 
 SummaryFrame::SummaryFrame(const RLEFrame* rleFrame,
-                           double autoCompress,
+			   double autoCompress,
 			   bool enableCoproc,
 			   vector<string>& diag) : 
   nRow(rleFrame->nRow),
@@ -48,6 +47,10 @@ SummaryFrame::SummaryFrame(const RLEFrame* rleFrame,
   numRanked(make_unique<BlockJagged<double> >(rleFrame->numVal,
                                               rleFrame->valOff,
                                               rleFrame->nPredNum)) {
+}
+
+
+SummaryFrame::~SummaryFrame() {
 }
 
 

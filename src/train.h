@@ -128,7 +128,8 @@ public:
      @param nThread is a user-specified thread request.
    */
   static void initOmp(unsigned int nThread);
-  
+
+
   /**
      @brief Registers response-sampling parameters.
 
@@ -170,19 +171,19 @@ public:
    */
   static void deInit();
 
-  static unique_ptr<Train> regression(
-       const class SummaryFrame* summaryFrame,
-       const double *y,
-       unsigned int treeChunk);
+  static unique_ptr<Train>
+  regression(const class SummaryFrame* frame,
+	     const double *y,
+	     unsigned int treeChunk);
 
 
-  static unique_ptr<Train> classification(
-       const class SummaryFrame* summaryFrame,
-       const unsigned int *yCtg,
-       const double *yProxy,
-       unsigned int nCtg,
-       unsigned int treeChunk,
-       unsigned int nTree);
+  static unique_ptr<Train>
+  classification(const class SummaryFrame* frame,
+		 const unsigned int *yCtg,
+		 const double *yProxy,
+		 unsigned int nCtg,
+		 unsigned int treeChunk,
+		 unsigned int nTree);
 
   /**
      @brief Attempts to extimate storage requirements for block after
