@@ -19,12 +19,15 @@
 #include <string>
 #include <vector>
 
-#include "typeparam.h"
+#include "decnode.h"
+#include "forestcresc.h"
+#include "pretree.h"
+
 
 /**
    @brief Short-lived bundle of objects created for training a block of trees.
  */
-typedef pair<unique_ptr<class Sample>, unique_ptr<class PreTree> > TrainSet;
+typedef pair<unique_ptr<class Sample>, unique_ptr<PreTree> > TrainSet;
 
 /**
    @brief Interface class for front end.  Holds simulation-specific parameters
@@ -34,10 +37,11 @@ class Train {
   static constexpr double slopFactor = 1.2; // Estimates tree growth.
   static unsigned int trainBlock; // Front-end defined buffer size.
 
+  const unique_ptr<class CandRF> cand; // Pre-candidate choice methods.
   const unsigned int nRow; // Number of rows to train.
   const unsigned int treeChunk; // Local number of trees to train.
   unique_ptr<class BitMatrix> bagRow; // Local bag section:  treeChunk x nRow
-  unique_ptr<class ForestTrain> forest; // Locally-trained forest block.
+  unique_ptr<ForestCresc<DecNode>> forest; // Locally-trained forest block.
   vector<double> predInfo; // E.g., Gini gain:  nPred.
 
   /**
@@ -102,13 +106,6 @@ public:
   static void initBlock(unsigned int trainBlock);
 
   /**
-     @brief Registers histogram of splitting ranges for numerical predictors.
-     
-     @param splitQuant is a per-predictor quantile specification.
-  */
-  static void initCDF(const vector<double> &splitQuant);
-
-  /**
      @brief Registers per-node probabilities of predictor selection.
   */
   static void initProb(unsigned int predFixed,
@@ -152,10 +149,13 @@ public:
      @param totLevels is the maximum tree depth to train.
 
      @param minRatio is the minimum information ratio of a node to its parent.
+     
+     @param splitQuant is a per-predictor quantile specification.
   */
   static void initSplit(unsigned int minNode,
                         unsigned int totLevels,
-                        double minRatio);
+                        double minRatio,
+			const vector<double>& feSplitQuant);
   
   /**
      @brief Registers monotone specifications for regression.
@@ -200,10 +200,10 @@ public:
      @return sum of tree sizes over block.
   */
   unsigned int blockPeek(vector<TrainSet> &treeBlock,
-                         size_t &blockFac,
-                         size_t &blockBag,
-                         size_t &blockLeaf,
-                         size_t &maxHeight);
+                         size_t& blockFac,
+                         IndexT& blockBag,
+                         IndexT& blockLeaf,
+                         IndexT& maxHeight);
 
   /**
      @brief Builds segment of decision forest for a block of trees.
@@ -227,7 +227,7 @@ public:
   /**
      @brief Getter for raw forest pointer.
    */
-  const class ForestTrain *getForest() const {
+  const ForestCresc<DecNode>* getForest() const {
     return forest.get();
   }
 
@@ -237,6 +237,18 @@ public:
      @param[out] bbRaw
    */
   void cacheBagRaw(unsigned char bbRaw[]) const;
+
+
+  /**
+     @brief Fixes splitting regime:  CART, survival, entropy, usw.
+
+     @nCtg is the reponse categoricity.
+   */
+  unique_ptr<class SplitFrontier>
+  splitFactory(const class SummaryFrame* frame,
+	       class Frontier* frontier,
+	       const class Sample* sample,
+	       PredictorT nCtg) const;
 };
 
 #endif

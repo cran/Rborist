@@ -5,11 +5,11 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/.
  */
 
-#ifndef CART_SPLITFRONTIER_H
-#define CART_SPLITFRONTIER_H
+#ifndef SPLIT_SPLITFRONTIER_H
+#define SPLIT_SPLITFRONTIER_H
 
 /**
-   @file splitnode.h
+   @file splitfrontier.h
 
    @brief Manages node splitting across the tree frontier, by response type.
 
@@ -18,7 +18,7 @@
  */
 
 #include "splitcoord.h"
-#include "typeparam.h"
+#include "pretree.h"
 #include "sumcount.h"
 
 #include <vector>
@@ -27,9 +27,9 @@
    @brief Enumerates split characteristics over a trained frontier.
  */
 struct SplitSurvey {
-  IndexT leafCount; // Number of terminals in this level.
+  IndexT leafCount; // Number of terminals in this layer.
   IndexT idxLive; // Extent of live buffer indices.
-  IndexT splitNext; // Number of splitable nodes in next level.
+  IndexT splitNext; // Number of splitable nodes in next layer.
   IndexT idxMax; // Maximum index.
 
   SplitSurvey() :
@@ -57,25 +57,26 @@ struct SplitSurvey {
 // type of predictor:  { regression, categorical } x { numeric, factor }.
 //
 class SplitFrontier {
-  vector<class SplitNux> nuxMax; // Rewritten following each splitting event.
-  void setPrebias();//class Frontier *index);
-  
- protected:
+  void setPrebias();
+
+protected:
+  vector<unique_ptr<class SplitNux> > nuxMax; // Rewritten following each splitting event.
+  const class Cand* cand;
   const class SummaryFrame* frame;
   const class RankedFrame* rankedFrame;
   class Frontier* frontier;
-  IndexT bagCount; 
-  const IndexT noSet; // Unreachable setIdx for SplitCand.
+  const PredictorT nPred;
   unique_ptr<class ObsPart> obsPart;
-  IndexT splitCount; // # subtree nodes at current level.
-  unique_ptr<class Run> run; // Run sets for the current level.
-  vector<class SplitCand> splitCand; // Schedule of splits.
-
+  IndexT nSplit; // # subtree nodes at current layer.
+  unique_ptr<class Run> run; // Run sets for the current layer.
+  
   vector<double> prebias; // Initial information threshold.
-  // Per-split accessors for candidate vector.  Set to splitCount
-  // and cleared after use:
-  vector<unsigned int> candOff;  // Lead candidate position.
-  vector<unsigned int> nCand;  // Number of candidates.
+
+  vector<DefCoord> restageCoord;
+
+  // Per-split accessors for candidate vector.  Reset by DefMap.
+  vector<IndexT> candOff;  // Lead candidate position:  cumulative
+  vector<PredictorT> nCand;  // At most nPred etries per candidate.
 
   /**
      @brief Retrieves the type-relative index of a numerical predictor.
@@ -87,49 +88,102 @@ class SplitFrontier {
   PredictorT getNumIdx(PredictorT predIdx) const;
 
 
-public:
+  /**
+     @brief Walks the list of split candidates and invalidates those which
+     restaging has marked unsplitable as well as singletons persisting since
+     initialization or as a result of bagging.  Fills in run counts, which
+     values restaging has established precisely.
+  */
+  vector<SplitNux>
+  postSchedule(class DefMap* defMap,
+	       vector<DefCoord>& preCand);
+
+
+  void
+  postSchedule(const DefMap* defMap,
+	       const DefCoord& preCand,
+	       vector<PredictorT>& runCount,
+	       vector<PredictorT>& nCand,
+	       vector<SplitNux>& postCand) const;
 
   
-  SplitFrontier(const class SummaryFrame *frame_,
+  /**
+     @brief Looks up the run count associated with a given node, predictor pair.
+     
+     @param splitCoord specifies the node, predictor candidate pair.
+
+     @return run count associated with the node, if factor, otherwise zero.
+   */
+  PredictorT getSetIdx(PredictorT rCount,
+		       vector<PredictorT>& runCount) const;
+
+
+
+public:
+
+  SplitFrontier(const class Cand* cand_,
+		const class SummaryFrame* frame_,
                 class Frontier* frontier_,
                 const class Sample* sample);
 
 
-  void scheduleSplits(//const class Frontier *index,
-		      const class Level *levelFront);
+  void
+  preschedule(const DefCoord& defCoord,
+	      vector<DefCoord>& preCand) const;
 
-  /**
-     @brief Emplaces new candidate with specified coordinates.
-   */
-  IndexT preschedule(//const Frontier* index,
-                     const SplitCoord& splitCoord,
-                     unsigned int bufIdx);
-
-  /**
-     @brief Passes through to ObsPart method.
-   */
   double blockReplay(class IndexSet* iSet,
                      const IndexRange& range,
                      bool leftExpl,
-                     class BV* replayExpl,
-                     class BV* replayLeft,
+		     class Replay* replay,
                      vector<SumCount>& ctgCrit) const;
 
   /**
      @brief Passes ObsPart through to Sample method.
    */
-  vector<class StageCount> stage(const class Sample* sample);
-  
+  vector<struct StageCount> stage(const class Sample* sample);
+
+
+  /**
+     @brief Main entry from frontier loop.
+   */
+  void restageAndSplit(class DefMap* defMap);
   
   /**
      @brief Passes through to ObsPart method.
    */
-  void restage(class Level* levelFrom,
-               class Level* levelTo,
-               const SplitCoord& splitCoord,
-               unsigned int bufIdx) const;
+  void scheduleRestage(const DefCoord& mrra) {
+    restageCoord.push_back(mrra);
+  }
 
+  /**
+     @brief Passes through to RunSet method.
 
+     @param setIdx is the Runset index.
+   */
+  IndexT lHBits(PredictorT setIdx,
+		PredictorT lhBits,
+		IndexT& lhSCount) const;
+
+  
+  IndexT lHSlots(PredictorT setIdx,
+		 PredictorT cutSlot,
+		 IndexT& lhSCount) const;
+  
+  
+  void restage(const class DefMap* defMap);
+
+  
+
+  /**
+     @brief Pass-through to data partition method.
+
+     @param cand is a splitting candidate.
+
+     @return pointer to beginning of partition associated with the candidate.
+   */
+  class SampleRank* getPredBase(const SplitNux* cand) const;
+
+  
   /**
      @brief Pass-through to row-rank method.
 
@@ -137,7 +191,7 @@ public:
 
      @return rank of dense value, if candidate's predictor has one.
    */
-  unsigned int getDenseRank(const SplitCand* cand) const;
+  IndexT getDenseRank(const SplitNux* cand) const;
 
   
   /**
@@ -188,35 +242,37 @@ public:
 
      @return descendant extent.
    */
-  IndexT getLHExtent(const class IndexSet& iSet) const;
+  IndexT getLHExtent(const class IndexSet* iSet) const;
 
   IndexT getPredIdx(const class IndexSet* iSet) const;
 
   unsigned int getBufIdx(const class IndexSet* iSet) const;
 
+  DefCoord getDefCoord(const class IndexSet* iSet) const;
+  
+  
   PredictorT getCardinality(const class IndexSet* iSet) const;
 
+  
   double getInfo(const class IndexSet* iSet) const;
 
   IndexRange getExplicitRange(const class IndexSet* iSet) const;
 
-  IndexRange getRankRange(const class IndexSet* iSet) const;
+  double getQuantRank(const class IndexSet* iSet) const;
 
   bool leftIsExplicit(const class IndexSet* iSet) const;
 
-  unsigned int getSetIdx(const class IndexSet* iSet) const;
+  IndexT getSetIdx(const class IndexSet* iSet) const;
 
 
   SplitSurvey consume(class PreTree* pretree,
                       vector<class IndexSet>& indexSet,
-                      class BV* replayExpl,
-                      class BV* replayLeft);
+                      class Replay* replay);
 
   
   void consume(class PreTree* pretree,
                class IndexSet& iSet,
-               class BV* replayExpl,
-               class BV* replayLeft,
+               class Replay* replay,
                SplitSurvey& survey) const;
 
   
@@ -227,8 +283,7 @@ public:
    */
   void branch(class PreTree* pretree,
               class IndexSet* iSet,
-              class BV* bvLeft,
-              class BV* bvRight) const;
+	      class Replay* replay) const;
 
 
   /**
@@ -236,18 +291,15 @@ public:
    */
   void critRun(class PreTree* pretree,
                class IndexSet* iSet,
-               class BV* bvLeft,
-               class BV* bvRight) const;
+	       class Replay* replay) const;
 
   /**
      @brief Replays cut-based criterion and updates pretree.
    */
   void critCut(class PreTree* pretree,
                class IndexSet* iSet,
-               BV* bvLeft,
-               BV* bvRight) const;
-
-
+	       class Replay* replay) const;
+  
   /**
      @brief Getter for pre-bias value, by index.
 
@@ -260,250 +312,83 @@ public:
   }
 
 
+  inline PredictorT getNPred() const {
+    return nPred;
+  }
+
+
+  inline IndexT getNSplit() const {
+    return nSplit;
+  }
+
+
+  /**
+     @return unreachable run-set index.
+   */
+  IndexT getNoSet() const;
+
+
+  /**
+     @brief Passes through to Frontier method.
+
+     @return true iff indexed split is not splitable.
+   */
+  bool isUnsplitable(IndexT splitIdx) const;
+
+
+  /**
+     @brief Pass-through to Frontier getters.
+   */
+  double getSum(const SplitCoord& splitCoord) const;
+
+  IndexT getSCount(const SplitCoord& splitCoord) const;
+
+  /**
+     @return buffer range of indexed split.
+  */
+  IndexRange getBufRange(const DefCoord& preCand) const; 
+
   /**
    */
   class RunSet *rSet(unsigned int setIdx) const;
 
   /**
-     @brief Initializes state associated with current level.
+     @brief Initializes state associated with current layer.
    */
   void init();
 
+  vector<unique_ptr<class SplitNux> >
+  maxCandidates(const vector<class SplitNux>& sc);
   
+  unique_ptr<class SplitNux>
+  maxSplit(const vector<class SplitNux>& sc,
+			  IndexT splitOff,
+                          IndexT nSplitFrontier) const;
+
   /**
      @brief Invokes algorithm-specific splitting methods.
    */
-  void split();
+  virtual void
+  split(vector<class SplitNux>& sc) = 0;
 
 
-  vector<class SplitNux> maxCandidates();
+  /**
+     @brief Passes through to Cand method.
+   */
+  vector<DefCoord>
+  precandidates(const class DefMap* defMap);
+
+  void setCandOff(const vector<PredictorT>& ncand);
   
-  class SplitNux maxSplit(unsigned int splitOff,
-                          unsigned int nSplitFrontier) const;
-  
-  virtual void splitCandidates() = 0;
   virtual ~SplitFrontier();
-  virtual void setRunOffsets(const vector<unsigned int> &safeCounts) = 0;
-  virtual void levelPreset() = 0;
+  virtual void setRunOffsets(const vector<PredictorT>& safeCounts) = 0;
+  virtual void layerPreset() = 0;
 
   virtual void setPrebias(IndexT splitIdx,
                           double sum,
                           IndexT sCount) = 0;
 
   virtual void clear();
-};
-
-
-/**
-   @brief Splitting facilities specific regression trees.
- */
-class SFReg : public SplitFrontier {
-  // Bridge-supplied monotone constraints.  Length is # numeric predictors
-  // or zero, if none so constrained.
-  static vector<double> mono;
-
-  // Per-level vector of uniform variates.
-  vector<double> ruMono;
-
-  void splitCandidates();
-
- public:
-
-  /**
-     @brief Caches a dense local copy of the mono[] vector.
-
-     @param summaryFrame contains the predictor block mappings.
-
-     @param bridgeMono has length equal to the predictor count.  Only
-     numeric predictors may have nonzero entries.
-  */
-  static void immutables(const class SummaryFrame* summaryFrame,
-                         const vector<double>& feMono);
-
-  /**
-     @brief Resets the monotone constraint vector.
-   */
-  static void deImmutables();
-  
-  SFReg(const class SummaryFrame* frame_,
-        class Frontier* frontier_,
-	const class Sample* sample);
-
-  ~SFReg();
-  void setRunOffsets(const vector<unsigned int> &safeCount);
-  void levelPreset();
-  void clear();
-
-  /**
-     @brief Determines whether a regression pair undergoes constrained splitting.
-     @return The sign of the constraint, if within the splitting probability, else zero.
-*/
-  int getMonoMode(const class SplitCand* cand) const;
-
-  /**
-     @brief Weighted-variance pre-bias computation for regression response.
-
-     @param sum is the sum of samples subsumed by the index node.
-
-     @param sCount is the number of samples subsumed by the index node.
-
-     @return sum squared, divided by sample count.
-  */
-  inline void setPrebias(IndexT splitIdx,
-			 double sum,
-			 IndexT sCount) {
-    prebias[splitIdx] = (sum * sum) / sCount;
-  }
-
-};
-
-
-/**
-   @brief Splitting facilities for categorical trees.
- */
-class SFCtg : public SplitFrontier {
-// Numerical tolerances taken from A. Liaw's code:
-  static constexpr double minDenom = 1.0e-5;
-  static constexpr double minSumL = 1.0e-8;
-  static constexpr double minSumR = 1.0e-5;
-
-  const PredictorT nCtg; // Response cardinality.
-  vector<double> sumSquares; // Per-level sum of squares, by split.
-  vector<double> ctgSumAccum; // Numeric predictors:  accumulate sums.
-
-  /**
-     @brief Initializes per-level sum and FacRun vectors.
-  */
-  void levelPreset();
-
-  /**
-     @brief Clears summary state associated with this level.
-   */
-  void clear();
-
-  /**
-     @brief Collects splitable candidates from among all restaged cells.
-   */
-  void splitCandidates();
-
-  /**
-     @brief RunSet initialization utitlity.
-
-     @param safeCount gives a conservative per-predictor count of distinct runs.
-   */
-  void setRunOffsets(const vector<unsigned int> &safeCount);
-
-
-  /**
-     @brief Initializes numerical sum accumulator for currently level.
-
-     @parm nPredNum is the number of numerical predictors.
-   */
-  void levelInitSumR(PredictorT nPredNum);
-
-  
-  /**
-     @brief Gini pre-bias computation for categorical response.
-
-     @param splitIdx is the level-relative node index.
-
-     @param sum is the sum of samples subsumed by the index node.
-
-     @param sCount is the number of samples subsumed by the index node.
-
-     @return sum of squares divided by sum.
-  */
-  inline void setPrebias(IndexT splitIdx,
-                         double sum,
-                         IndexT sCount) {
-    prebias[splitIdx] = sumSquares[splitIdx] / sum;
-  }
-
-
- public:
-  vector<vector<double> > ctgSum; // Per-category response sums, by node.
-
-  SFCtg(const class SummaryFrame* frame_,
-        class Frontier* frontier_,
-	const class Sample* sample,
-	PredictorT nCtg_);
-  ~SFCtg();
-
-
-  /**
-     @brief Getter for training response cardinality.
-
-     @return nCtg value.
-   */
-  inline PredictorT getNCtg() const {
-    return nCtg;
-  }
-
-  
-  /**
-     @brief Determine whether an ordered pair of sums is acceptably stable
-     to appear in the denominator.
-
-     Only relevant for instances of extreme case weighting.  Currently unused
-     and may be obsolete.
-
-     @param sumL is the left-hand sum.
-
-     @param sumR is the right-hand sum.
-
-     @return true iff both sums suitably stable.
-   */
-  inline bool stableSum(double sumL, double sumR) const {
-    return sumL > minSumL && sumR > minSumR;
-  }
-
-
-  /**
-     @brief Determines whether a pair of sums is acceptably stable to appear
-     in the denominators.
-
-     Only relevant for instances of extreme case weighting.  Currently unused
-     and may not be useful if training responses are normalized.
-
-     @param sumL is the left-hand sum.
-
-     @param sumR is the right-hand sum.
-
-     @return true iff both sums suitably stable.
-   */
-  inline bool stableDenom(double sumL, double sumR) const {
-    return sumL > minDenom && sumR > minDenom;
-  }
-  
-
-  /**
-     @brief Accesses per-category sum vector associated with candidate's node.
-
-     @param cand is the splitting candidate.
-
-     @return reference vector of per-category sums.
-   */
-  const vector<double>& getSumSlice(const class SplitCand* cand);
-
-
-  /**
-     @brief Provides slice into accumulation vector for a splitting candidate.
-
-     @param cand is the splitting candidate.
-
-     @return raw pointer to per-category accumulation vector for pair.
-   */
-  double* getAccumSlice(const class SplitCand* cand);
-
-
-  /**
-     @brief Per-node accessor for sum of response squares.
-
-     @param cand is a splitting candidate.
-
-     @return sum, over categories, of node reponse values.
-   */
-  double getSumSquares(const class SplitCand *cand) const;
 };
 
 

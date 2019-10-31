@@ -21,14 +21,14 @@
 /**
    @brief Split/predictor coordinate pair.
  */
-//typedef pair<IndexType, unsigned int> SPPair;
+
 
 struct SplitCoord {
-  IndexType nodeIdx;
-  unsigned int predIdx;
+  IndexT nodeIdx;
+  PredictorT predIdx;
 
-  SplitCoord(IndexType nodeIdx_,
-             unsigned int predIdx_) :
+  SplitCoord(IndexT nodeIdx_,
+             PredictorT predIdx_) :
   nodeIdx(nodeIdx_),
     predIdx(predIdx_) {
   }
@@ -37,6 +37,7 @@ struct SplitCoord {
   nodeIdx(0),
     predIdx(0) {
   }
+
   
   /**
      @brief Computes node-major offset using passed stride value.
@@ -55,6 +56,32 @@ struct SplitCoord {
    */
   inline size_t backScale(unsigned int del) const {
     return nodeIdx << del;
+  }
+};
+
+
+/**
+   @brief Includes the index of the buffer containing the cell's definition.
+ */
+struct DefCoord {
+  SplitCoord splitCoord;
+  unsigned char bufIdx; // Double-buffer containing definition.
+  unsigned char del; // Delta between current level and level of definition.
+  
+  DefCoord(const SplitCoord& splitCoord_,
+	   unsigned int bufIdx_,
+	   unsigned int del_ = 0) :
+  splitCoord(splitCoord_),
+    bufIdx(bufIdx_),
+    del(del_) {
+  }
+
+  
+  /**
+     @return index of complementary buffer.
+   */
+  unsigned int compBuffer() const {
+    return 1 - bufIdx;
   }
 };
 

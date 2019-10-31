@@ -13,33 +13,86 @@
    @author Mark Seligman
  */
 
+#include "accum.h"
 #include "frontier.h"
+#include "splitfrontier.h"
 #include "splitnux.h"
-#include "splitcand.h"
 #include "summaryframe.h"
+
 
 double SplitNux::minRatio = minRatioDefault;
 
-void SplitNux::immutables(double minRatio) {
+vector<double> SplitNux::splitQuant;
+
+
+void SplitNux::immutables(double minRatio,
+			  const vector<double>& feSplitQuant) {
   SplitNux::minRatio = minRatio;
+  for (auto quant : feSplitQuant) {
+    splitQuant.push_back(quant);
+  }
 }
+
 
 void SplitNux::deImmutables() {
   minRatio = minRatioDefault;
+  splitQuant.clear();
 }
 
 
-SplitNux::SplitNux(const SplitCand& cand, const SummaryFrame* frame) :
-  info(cand.getInfo()),
-  predIdx(cand.getSplitCoord().predIdx),
-  bufIdx(cand.getBufIdx()),
-  lhSCount(cand.getLhSCount()),
-  lhExtent(cand.getLhExtent()),
-  lhImplicit(cand.getLhImplicit()),
-  idxRange(cand.getIdxRange()),
-  rankRange(cand.getRankRange()),
-  setIdx(cand.getSetIdx()),
-  cardinality(frame->getCardinality(predIdx)) {
+SplitNux::SplitNux(const DefCoord& preCand,
+		   const SplitFrontier* splitFrontier,
+		   PredictorT setIdx_,
+		   IndexRange range,
+		   IndexT implicitCount) :
+  splitCoord(preCand.splitCoord),
+  bufIdx(preCand.bufIdx),
+  idxRange(range),
+  setIdx(setIdx_),
+  sum(splitFrontier->getSum(splitCoord)),
+  lhSCount(splitFrontier->getSCount(splitCoord)),
+  info(splitFrontier->getPrebias(splitCoord)),
+  lhImplicit(implicitCount) {
+}
+
+  
+bool SplitNux::infoGain(const SplitFrontier* splitFrontier) {
+  info -= splitFrontier->getPrebias(splitCoord);
+  return info > 0.0;
+}
+
+
+void SplitNux::writeBits(const SplitFrontier* splitFrontier,
+			 PredictorT lhBits) {
+  if (infoGain(splitFrontier)) {
+    lhExtent = splitFrontier->lHBits(setIdx, lhBits, lhSCount);
+  }
+}
+
+
+void SplitNux::writeSlots(const SplitFrontier* splitFrontier,
+                          PredictorT cutSlot) {
+  if (infoGain(splitFrontier)) {
+    lhExtent = splitFrontier->lHSlots(setIdx, cutSlot, lhSCount);
+  }
+}
+
+
+void SplitNux::writeNum(const SplitFrontier* sf,
+			const Accum* accum) {
+  info = accum->info;
+  if (infoGain(sf)) {
+    IndexRange range = IndexRange(accum->rankLH, accum->rankRH - accum->rankLH);
+    quantRank = range.interpolate(splitQuant[splitCoord.predIdx]);
+    lhSCount = accum->lhSCount;
+    lhImplicit = accum->lhImplicit(this);
+    lhExtent = lhImplicit + (accum->rhMin - idxRange.getStart());
+  }
+}
+
+
+PredictorT SplitNux::getCardinality(const SummaryFrame* frame) const {
+  return frame->getCardinality(splitCoord.predIdx);
 }
 
 

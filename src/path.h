@@ -14,13 +14,14 @@
    @author Mark Seligman
  */
 
-#ifndef CORE_PATH_H
-#define CORE_PATH_H
+#ifndef PARTITION_PATH_H
+#define PARTITION_PATH_H
 
 #include <cstdint>
 #include <vector>
 
 #include "typeparam.h"
+
 
 /**
    @brief Records index, start and extent for path reached from MRRA.
@@ -30,7 +31,7 @@ class NodePath {
   // Maximal path length is also an inattainable path index.
   static constexpr unsigned int noPath = 1 << logPathMax;
 
-  IndexType splitIdx; // < noIndex iff path extinct.
+  IndexT splitIdx; // < noIndex iff path extinct.
   IndexRange bufRange; // buffer target range for path.
   unsigned int relBase; // Dense starting position.
  public:
@@ -70,7 +71,7 @@ class NodePath {
   /**
      @brief Sets to non-extinct path coordinates.
    */
-  inline void init(IndexType splitIdx,
+  inline void init(IndexT splitIdx,
                    const IndexRange& bufRange,
                    unsigned int relBase) {
     this->splitIdx = splitIdx;
@@ -82,18 +83,18 @@ class NodePath {
   /**
      @brief Multiple accessor for path coordinates.
    */
-  inline IndexType getCoords(IndexRange& idxRange) const {
+  inline IndexT getCoords(IndexRange& idxRange) const {
     idxRange = bufRange;
     return splitIdx;
   }
 
   
-  inline IndexType getIdxStart() const {
+  inline IndexT getIdxStart() const {
     return bufRange.getStart();
   }
 
 
-  inline IndexType getExtent() const {
+  inline IndexT getExtent() const {
     return bufRange.getExtent();
   }
   
@@ -103,7 +104,7 @@ class NodePath {
   }
 
 
-  inline IndexType getSplitIdx() const {
+  inline IndexT getSplitIdx() const {
     return splitIdx;
   }
 };
@@ -116,7 +117,7 @@ class IdxPath {
   static constexpr unsigned int maskLive = maskExtinct - 1;
   static constexpr unsigned int relMax = 1 << 15;
   vector<unsigned int> relFront;
-  vector<unsigned char> pathFront;
+  vector<PathT> pathFront;
 
   /**
      @brief Setter for path reaching an index.
@@ -208,7 +209,7 @@ class IdxPath {
      @brief When appropriate, introduces node-relative indexing at the
      cost of trebling span of memory accesses:  char vs. char + uint16.
 
-     @return True iff node-relative indexing expected to be profitable.
+     @return true iff node-relative indexing expected to be profitable.
    */
   static inline bool localizes(unsigned int bagCount, unsigned int idxMax) {
     return idxMax > relMax || bagCount <= 3 * relMax ? false : true;

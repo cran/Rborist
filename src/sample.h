@@ -151,8 +151,6 @@ class Sample {
                                                class BV *treeBag);
   
 
-  virtual unique_ptr<class SplitFrontier> frontierFactory(const class SummaryFrame* frame, class Frontier* frontier) const = 0;
-
   /**
      @brief Lights off static initializations needed for sampling.
 
@@ -191,13 +189,13 @@ class Sample {
 
      @param samplePred summarizes the observations.
   */
-  vector<class StageCount> stage(class ObsPart* samplePred) const;
+  vector<struct StageCount> stage(class ObsPart* samplePred) const;
 
 
   /**
      @brief Getter for root category census vector.
    */
-  inline const vector<SumCount> &getCtgRoot() const {
+  inline const vector<SumCount> getCtgRoot() const {
     return ctgRoot;
   }
 
@@ -291,9 +289,6 @@ class SampleReg : public Sample {
   ~SampleReg();
 
 
-  unique_ptr<class SplitFrontier> frontierFactory(const class SummaryFrame* frame, class Frontier* frontier) const;
-
-
   /**
      @brief Appends regression-style sampling record.
 
@@ -330,8 +325,7 @@ class SampleCtg : public Sample {
   SampleCtg(const class SummaryFrame* frame);
   ~SampleCtg();
 
-  unique_ptr<class SplitFrontier> frontierFactory(const class SummaryFrame* frame, class Frontier* frontier) const;
-
+  
   /**
      @brief Appends a sample summary record.
 

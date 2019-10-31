@@ -14,10 +14,12 @@
 
  */
 
-#ifndef PARTITION_PTNODE_H
-#define PARTITION_PTNODE_H
+#ifndef TREE_PTNODE_H
+#define TREE_PTNODE_H
 
 #include "typeparam.h"
+#include "forestcresc.h"
+#include "crit.h"
 
 #include <vector>
 #include <algorithm>
@@ -25,10 +27,11 @@
 /**
   @brief Decision node specialized for training.
  */
+template<typename nodeType>
 class PTNode {
-  IndexType lhDel; // zero iff terminal.
-  IndexType critCount; // Number of associated criteria; 0 iff terminal.
-  IndexType critOffset;  // Index of first criterion.
+  IndexT lhDel; // zero iff terminal.
+  IndexT critCount; // Number of associated criteria; 0 iff terminal.
+  IndexT critOffset;  // Index of first criterion.
   FltVal info;  // Zero iff terminal.
  public:
 
@@ -43,7 +46,9 @@ class PTNode {
   /**
      @return starting bit of split value.
    */
-  IndexType getBitOffset(const vector<struct SplitCrit>& splitCrit) const;
+  IndexT getBitOffset(const vector<Crit>& crit) const {
+    return crit[critOffset].getBitOffset();
+  }
   
   
   /**
@@ -51,10 +56,18 @@ class PTNode {
 
      @param forest[in, out] accumulates the growing forest node vector.
   */
-  void consumeNonterminal(class ForestTrain *forest,
-                          vector<double> &predInfo,
-                          IndexType idx,
-                          const vector<struct SplitCrit>& splitCriterion) const;
+  void consumeNonterminal(ForestCresc<nodeType>* forest,
+                          vector<double>& predInfo,
+                          IndexT idx,
+                          const vector<Crit>& crit) const {
+    if (isNonTerminal()) {
+      Crit criterion(crit[critOffset]);
+      forest->nonTerminal(idx, lhDel, criterion);
+      predInfo[criterion.predIdx] += info;
+    }
+  }
+
+
 
   /**
      @builds bit-based split.
@@ -66,8 +79,8 @@ class PTNode {
      @param critOffset is the begining criterion offset.
    */
   inline void nonterminal(double info,
-                          IndexType lhDel,
-                          IndexType critOffset) {
+                          IndexT lhDel,
+                          IndexT critOffset) {
     this->info = info;
     this->lhDel = lhDel;
     this->critOffset = critOffset;
@@ -87,7 +100,7 @@ class PTNode {
 
      @return void.
    */
-  inline void setNonterminal(IndexType lhDel) {
+  inline void setNonterminal(IndexT lhDel) {
     this->lhDel = lhDel;
   }
 
@@ -97,11 +110,11 @@ class PTNode {
   }
 
 
-  inline IndexType getLHId(IndexType ptId) const {
+  inline IndexT getLHId(IndexT ptId) const {
     return isNonTerminal() ? ptId + lhDel : 0;
   }
 
-  inline IndexType getRHId(IndexType ptId) const {
+  inline IndexT getRHId(IndexT ptId) const {
     return isNonTerminal() ? getLHId(ptId) + 1 : 0;
   }
 };

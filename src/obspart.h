@@ -18,21 +18,12 @@
 
 
 #include "splitcoord.h"
+#include "stagecount.h"
 #include "typeparam.h"
 
 #include <vector>
 
 #include "samplenux.h" // Temporary
-
-
-/**
-   @brief Summarizes staging operation.
- */
-class StageCount {
- public:
-  unsigned int expl;
-  bool singleton;
-};
 
 
 /**
@@ -102,7 +93,7 @@ class ObsPart {
              unsigned int rrTot,
              const vector<class SampleNux> &sampleNode,
              const class Sample* sample,
-             vector<class StageCount> &stageCount);
+             vector<struct StageCount> &stageCount);
 
   /**
      @brief Fills in sampled response summary and rank information associated
@@ -143,27 +134,9 @@ class ObsPart {
                      const class IndexSet* iSet,
                      const IndexRange& range,
                      bool leftExpl,
-                     class BV *replayExpl,
-                     class BV* replayLeft,
+		     class Replay* replay,
                      vector<SumCount>& ctgCrit) const;
 
-
-  
-  /**
-     @brief Drives restaging from an ancestor node and level to current level.
-
-     @param levelBack is the ancestor's level.
-
-     @param levelFront is the current level.
-
-     @param mrra is the ancestor.
-
-     @param bufIdx is the buffer indes of the ancestor.
-   */
-  void restage(class Level *levelBack,
-               class Level *levelFront,
-               const SplitCoord &mrra,
-               unsigned int bufIdx);
   
   /**
      @brief Localizes copies of the paths to each index position.
@@ -206,8 +179,7 @@ class ObsPart {
   */
   void prepath(const class IdxPath *idxPath,
                const unsigned int reachBase[],
-               PredictorT predIdx,
-               unsigned int bufIdx,
+	       const DefCoord& mrra,
                const IndexRange& idxRange,
                unsigned int pathMask,
                bool idxUpdate,
@@ -216,8 +188,7 @@ class ObsPart {
   /**
      @brief Restages and tabulates rank counts.
   */
-  void rankRestage(PredictorT predIdx,
-                   unsigned int bufIdx,
+  void rankRestage(const DefCoord& defCoord,
                    const IndexRange& idxRange,
                    unsigned int reachOffset[],
                    unsigned int rankPrev[],
@@ -225,8 +196,7 @@ class ObsPart {
 
   void indexRestage(const class IdxPath *idxPath,
                     const unsigned int reachBase[],
-                    const SplitCoord& mrra,
-                    unsigned int bufIdx,
+                    const DefCoord& mrra,
                     const IndexRange& idxRange,
                     unsigned int pathMask,
                     bool idxUpdate,
@@ -277,11 +247,17 @@ class ObsPart {
   }
 
 
+  inline IndexT bufferOff(const DefCoord& defCoord,
+			  bool comp = false) const {
+    return bufferOff(defCoord.splitCoord.predIdx, comp ? defCoord.compBuffer() : defCoord.bufIdx);
+  }
+
+
   /**
      @return base of the index buffer.
    */
-  inline IndexT *bufferIndex(PredictorT predIdx, unsigned int bufBit) const {
-    return indexBase + bufferOff(predIdx, bufBit);
+  inline IndexT* bufferIndex(const DefCoord& mrra) const {
+    return indexBase + bufferOff(mrra);
   }
 
 
@@ -295,7 +271,9 @@ class ObsPart {
   
   /**
    */
-  inline SampleRank* buffers(PredictorT predIdx, unsigned int bufBit, IndexT*& sIdx) const {
+  inline SampleRank* buffers(PredictorT predIdx,
+			     unsigned int bufBit,
+			     IndexT*& sIdx) const {
     IndexT offset = bufferOff(predIdx, bufBit);
     sIdx = indexBase + offset;
     return nodeVec + offset;
@@ -304,8 +282,8 @@ class ObsPart {
 
   
 
-  inline IndexT* indexBuffer(PredictorT predIdx, unsigned int bufBit) const {
-    IndexT offset = bufferOff(predIdx, bufBit);
+  inline IndexT* indexBuffer(const DefCoord& defCoord) {
+    IndexT offset = bufferOff(defCoord.splitCoord.predIdx, defCoord.bufIdx);
     return indexBase + offset;
   }
 
@@ -313,9 +291,10 @@ class ObsPart {
   /**
      @brief Passes through to above after looking up splitting parameters.
    */
-  SampleRank* buffers(const class SplitFrontier* splitFrontier,
-                      const class IndexSet* iSet,
-                      IndexT*& sIdx) const;
+  SampleRank* buffers(const DefCoord& defCoord,
+                      IndexT*& sIdx) const {
+    return buffers(defCoord.splitCoord.predIdx, defCoord.bufIdx, sIdx);
+  }
 
 
   /**
@@ -336,11 +315,10 @@ class ObsPart {
 
      @return node vector section for this predictor.
    */
-  SampleRank* PredBase(const SplitCoord& splitCoord, unsigned int bufBit) const {
-    return nodeVec + bufferOff(splitCoord.predIdx, bufBit);
+  SampleRank* getPredBase(const DefCoord& defCoord) const {
+    return nodeVec + bufferOff(defCoord);
   }
   
-
   /**
      @brief Returns buffer containing splitting information.
    */
@@ -349,32 +327,22 @@ class ObsPart {
   }
 
 
-  /**
-   @brief Looks up source and target vectors.
-
-   @param predIdx is the predictor column.
-
-   @param level is the upcoming level.
-
-   @return void, with output parameter vectors.
- */
-  inline void buffers(PredictorT predIdx,
-                      unsigned int bufBit,
-                      SampleRank*& source,
-                      IndexT*& sIdxSource,
-                      SampleRank*& targ,
-                      IndexT*& sIdxTarg) {
-    source = buffers(predIdx, bufBit, sIdxSource);
-    targ = buffers(predIdx, 1 - bufBit, sIdxTarg);
+  inline void buffers(const DefCoord& mrra,
+		      SampleRank*& source,
+		      IndexT*& sIdxSource,
+		      SampleRank*& targ,
+		      IndexT*& sIdxTarg) {
+    source = buffers(mrra.splitCoord.predIdx, mrra.bufIdx, sIdxSource);
+    targ = buffers(mrra.splitCoord.predIdx, mrra.compBuffer(), sIdxTarg);
   }
 
+  
   // To coprocessor subclass:
-  inline void indexBuffers(PredictorT predIdx,
-                           unsigned int bufBit,
+  inline void indexBuffers(const DefCoord& mrra,
                            IndexT*& sIdxSource,
                            IndexT*& sIdxTarg) {
-    sIdxSource = indexBase + bufferOff(predIdx, bufBit);
-    sIdxTarg = indexBase + bufferOff(predIdx, 1 - bufBit);
+    sIdxSource = indexBase + bufferOff(mrra);
+    sIdxTarg = indexBase + bufferOff(mrra, true);
   }
   
 

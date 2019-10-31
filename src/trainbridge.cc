@@ -15,7 +15,6 @@
 
 #include "trainbridge.h"
 
-#include "forest.h"
 #include "leaf.h"
 #include "train.h"
 #include "summaryframe.h"
@@ -52,11 +51,6 @@ void TrainBridge::initBlock(unsigned int trainBlock) {
 }
 
 
-void TrainBridge::initCDF(const vector<double> &splitQuant){
-  Train::initCDF(splitQuant);
-}
-
-
 void TrainBridge::initProb(unsigned int predFixed,
                            const vector<double> &predProb) {
   Train::initProb(predFixed, predProb);
@@ -85,8 +79,9 @@ void TrainBridge::initCtgWidth(unsigned int ctgWidth) {
 
 void TrainBridge::initSplit(unsigned int minNode,
                             unsigned int totLevels,
-                            double minRatio) {
-  Train::initSplit(minNode, totLevels, minRatio);
+                            double minRatio,
+			    const vector<double>& feSplitQuant) {
+  Train::initSplit(minNode, totLevels, minRatio, feSplitQuant);
 }
   
 

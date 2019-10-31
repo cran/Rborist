@@ -15,6 +15,7 @@
 
 #include "forest.h"
 #include "forestbridge.h"
+#include "cartnode.h"
 
 #include <memory>
 using namespace std;
@@ -24,7 +25,7 @@ ForestBridge::ForestBridge(const unsigned int* height,
                            const unsigned char* node,
                            unsigned int* facSplit,
                            const unsigned int* facHeight) :
-  forest(make_unique<Forest>(height, nTree, (const TreeNode*) node, facSplit, facHeight)) {
+  forest(make_unique<Forest>(height, nTree, (const CartNode*) node, facSplit, facHeight)) {
 }
 
 
@@ -33,7 +34,7 @@ ForestBridge::~ForestBridge() {
 
 
 size_t ForestBridge::nodeSize() {
-  return sizeof(TreeNode);
+  return sizeof(CartNode);
 }
 
 

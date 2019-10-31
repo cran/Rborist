@@ -17,6 +17,9 @@
 #ifndef RF_BRIDGE_TRAINBRIDGE_H
 #define RF_BRIDGE_TRAINBRIDGE_H
 
+#include "forestcresc.h"
+#include "cartnode.h"
+
 #include<vector>
 #include<memory>
 
@@ -49,12 +52,6 @@ struct TrainBridge {
   */
   static void initBlock(unsigned int trainBlock);
 
-  /**
-     @brief Registers histogram of splitting ranges for numerical predictors.
-     
-     @param splitQuant is a per-predictor quantile specification.
-  */
-  static void initCDF(const vector<double> &splitQuant);
 
   /**
      @brief Registers per-node probabilities of predictor selection.
@@ -100,10 +97,13 @@ struct TrainBridge {
      @param totLevels is the maximum tree depth to train.
 
      @param minRatio is the minimum information ratio of a node to its parent.
+     
+     @param splitQuant is a per-predictor quantile specification.
   */
   static void initSplit(unsigned int minNode,
                         unsigned int totLevels,
-                        double minRatio);
+                        double minRatio,
+			const vector<double>& feSplitQuant);
   
   /**
      @brief Registers monotone specifications for regression.
@@ -200,7 +200,7 @@ struct TrainChunk {
   /**
      @brief Getter for raw forest pointer.
    */
-  const class ForestTrain *getForest() const;
+  const class ForestCresc<struct CartNode>* getForest() const;
 
   
   /**
