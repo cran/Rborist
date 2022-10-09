@@ -14,18 +14,12 @@
 */
 
 #include "bv.h"
-#include "sample.h"
 #include "train.h"
-#include "summaryframe.h"
+#include "predictorframe.h"
 #include "frontier.h"
 #include "pretree.h"
-#include "obspart.h"
-#include "sfcart.h"
-#include "splitnux.h"
 #include "leaf.h"
-#include "candrf.h"
-#include "ompthread.h"
-#include "coproc.h"
+#include "sampler.h"
 
 #include <algorithm>
 
@@ -37,188 +31,65 @@ void Train::initBlock(unsigned int trainBlock_) {
 }
 
 
-void Train::initProb(PredictorT predFixed,
-                     const vector<double> &predProb) {
-  CandRF::init(predFixed, predProb);
-}
-
-
-void Train::initTree(unsigned int nSamp,
-                     unsigned int minNode,
-                     unsigned int leafMax) {
-  PreTree::immutables(nSamp, minNode, leafMax);
-}
-
-
-void Train::initOmp(unsigned int nThread) {
-  OmpThread::init(nThread);
-}
-
-
-void Train::initSample(unsigned int nSamp) {
-  Sample::immutables(nSamp);
-}
-
-void Train::initSplit(unsigned int minNode,
-                      unsigned int totLevels,
-                      double minRatio,
-		      const vector<double>& feSplitQuant) {
-  Frontier::immutables(minNode, totLevels);
-  SplitNux::immutables(minRatio, feSplitQuant);
-}
-
-
-void Train::initCtgWidth(unsigned int ctgWidth) {
-  SampleNux::immutables(ctgWidth);
-}
-
-
-void Train::initMono(const SummaryFrame* frame,
-                     const vector<double> &regMono) {
-  SFCartReg::immutables(frame, regMono);
-}
-
-
 void Train::deInit() {
   trainBlock = 0;
-  SplitNux::deImmutables();
-  Frontier::deImmutables();
-  PreTree::deImmutables();
-  Sample::deImmutables();
-  SampleNux::deImmutables();
-  CandRF::deInit();
-  SFCartReg::deImmutables();
-  OmpThread::deInit();
 }
 
 
-unique_ptr<Train> Train::regression(const SummaryFrame* frame,
-                                    const double* y,
-                                    unsigned int treeChunk) {
-  auto trainReg = make_unique<Train>(frame, y, treeChunk);
-  trainReg->trainChunk(frame);
-
-  return trainReg;
-}
-
-
-Train::Train(const SummaryFrame* frame,
-             const double* y,
-             unsigned int treeChunk_) :
-  cand(make_unique<CandRF>()),
-  nRow(frame->getNRow()),
-  treeChunk(treeChunk_),
-  bagRow(make_unique<BitMatrix>(treeChunk, nRow)),
-  forest(make_unique<ForestCresc<DecNode> >(treeChunk)),
-  predInfo(vector<double>(frame->getNPred())),
-  leaf(LFTrain::factoryReg(y, treeChunk)) {
-}
-
-
-unique_ptr<Train> Train::classification(const SummaryFrame* frame,
-                                        const unsigned int* yCtg,
-                                        const double* yProxy,
-                                        unsigned int nCtg,
-                                        unsigned int treeChunk,
-                                        unsigned int nTree) {
-  auto trainCtg = make_unique<Train>(frame, yCtg, nCtg, yProxy, nTree, treeChunk);
-  trainCtg->trainChunk(frame);
-
-  return trainCtg;
-}
-
-
-Train::Train(const SummaryFrame* frame,
-             const unsigned int* yCtg,
-             unsigned int nCtg,
-             const double* yProxy,
-             unsigned int nTree,
-             unsigned int treeChunk_) :
-  cand(make_unique<CandRF>()),
-  nRow(frame->getNRow()),
-  treeChunk(treeChunk_),
-  bagRow(make_unique<BitMatrix>(treeChunk, nRow)),
-  forest(make_unique<ForestCresc<DecNode> >(treeChunk)),
-  predInfo(vector<double>(frame->getNPred())),
-  leaf(LFTrain::factoryCtg(yCtg, yProxy, treeChunk, nRow, nCtg, nTree)) {
-}
-
-
-Train::~Train() {
-}
-
-
-void Train::trainChunk(const SummaryFrame* frame) {
-  for (unsigned treeStart = 0; treeStart < treeChunk; treeStart += trainBlock) {
-    unsigned int treeEnd = min(treeStart + trainBlock, treeChunk); // one beyond.
-    auto treeBlock = blockProduce(frame, treeStart, treeEnd - treeStart);
-    blockConsume(treeBlock, treeStart);
-  }
+unique_ptr<Train> Train::train(const PredictorFrame* frame,
+			       const Sampler* sampler,
+			       Forest* forest,
+			       const IndexRange& treeRange,
+			       Leaf* leaf) {
+  auto train = make_unique<Train>(frame, forest);
+  train->trainChunk(frame, sampler, treeRange, leaf);
   forest->splitUpdate(frame);
+
+  return train;
 }
 
 
-vector<TrainSet> Train::blockProduce(const SummaryFrame* frame,
-                                     unsigned int tStart,
-                                     unsigned int tCount) {
-  unsigned int tIdx = tStart;
-  vector<TrainSet> block(tCount);
-  for (auto & set : block) {
-    unique_ptr<Sample> sample(leaf->rootSample(frame, bagRow.get(), tIdx++));
-    unique_ptr<PreTree> preTree(Frontier::oneTree(this, frame, sample.get()));
-    set = make_pair(move(sample), move(preTree));
-  }
+Train::Train(const PredictorFrame* frame,
+	     Forest* forest_) :
+  predInfo(vector<double>(frame->getNPred())),
+  forest(forest_) {
+}
 
-  if (tStart == 0)
-    reserve(block);
+
+void Train::trainChunk(const PredictorFrame* frame,
+		       const Sampler * sampler,
+		       const IndexRange& treeRange,
+		       Leaf* leaf) {
+  for (unsigned treeStart = treeRange.getStart(); treeStart < treeRange.getEnd(); treeStart += trainBlock) {
+    auto treeBlock = blockProduce(frame, sampler, treeStart, min(treeStart + trainBlock, static_cast<unsigned int>(treeRange.getEnd())));
+    blockConsume(treeBlock, leaf);
+  }
+}
+
+
+vector<unique_ptr<PreTree>> Train::blockProduce(const PredictorFrame* frame,
+						const Sampler* sampler,
+						unsigned int treeStart,
+						unsigned int treeEnd) const {
+  vector<unique_ptr<PreTree>> block;
+  for (unsigned int tIdx = treeStart; tIdx < treeEnd; tIdx++) {
+    block.emplace_back(Frontier::oneTree(frame, sampler, tIdx));
+  }
 
   return block;
 }
 
  
-void Train::blockConsume(vector<TrainSet>& treeBlock,
-                         unsigned int blockStart) {
-  unsigned int blockIdx = blockStart;
-  for (auto & trainSet : treeBlock) {
-    const vector<IndexT> leafMap = get<1>(trainSet)->consume(forest.get(), blockIdx, predInfo);
-    leaf->blockLeaves(get<0>(trainSet).get(), leafMap, blockIdx++);
+void Train::blockConsume(const vector<unique_ptr<PreTree>>& treeBlock,
+			 Leaf* leaf) {
+  for (auto & pretree : treeBlock) {
+    pretree->consume(this, forest, leaf);
   }
 }
 
 
-void Train::reserve(vector<TrainSet>& treeBlock) {
-  size_t blockFac;
-  IndexT blockBag, blockLeaf;
-  IndexT maxHeight = 0;
-  (void) blockPeek(treeBlock, blockFac, blockBag, blockLeaf, maxHeight);
-  PreTree::reserve(maxHeight);
-}
-
-
-unsigned int Train::blockPeek(vector<TrainSet>& treeBlock,
-                              size_t& blockFac,
-                              IndexT& blockBag,
-                              IndexT& blockLeaf,
-                              IndexT& maxHeight) {
-  IndexT blockHeight = 0;
-  blockLeaf = blockFac = blockBag = 0;
-  for (auto & set : treeBlock) {
-    get<1>(set)->blockBump(blockHeight, maxHeight, blockFac, blockLeaf, blockBag);
+void Train::consumeInfo(const vector<double>& info) {
+  for (IndexT predIdx = 0; predIdx < predInfo.size(); predIdx++) {
+    predInfo[predIdx] += info[predIdx];
   }
-
-  return blockHeight;
-}
-
- 
-void Train::cacheBagRaw(unsigned char* bbRaw) const {
-  bagRow->Serialize(bbRaw);
-}
-
-
-unique_ptr<SplitFrontier>
-Train::splitFactory(const SummaryFrame* frame,
-		    Frontier* frontier,
-		    const Sample* sample,
-		    PredictorT nCtg) const {
-  return SFCart::splitFactory(cand.get(), frame, frontier, sample, nCtg);
 }

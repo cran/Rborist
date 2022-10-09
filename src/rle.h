@@ -1,4 +1,4 @@
-// This file is part of ArboristCore.
+// This file is part of deframe.
 
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
@@ -13,31 +13,67 @@
    @author Mark Seligman
  */
 
-#ifndef FRAMEMAP_RLE_H
-#define FRAMEMAP_RLE_H
+#ifndef DEFRAME_RLE_H
+#define DEFRAME_RLE_H
 
+#include<cstddef>
+using namespace std;
 
 /**
    @brief Run-length encoding class for parametrized type.
  */
 
-template<typename rec>
+template<typename valType>
 struct RLE {
-  rec val;
-  unsigned int runLength;
+  valType val;
+  size_t extent;
 
-  RLE() {
-  }
+  RLE() = default;
 
   
-  RLE(const rec& val_,
-      unsigned int runLength_) : val(val_),
-                                 runLength(runLength_) {
+  RLE(const valType& val_,
+      size_t extent_) : val(val_),
+			extent(extent_) {
   }
   
-  void bumpLength(unsigned int bump) {
-    runLength += bump;
+  void bumpLength(size_t bump) {
+    extent += bump;
   }
 };
+
+
+/**
+  @brief Sparse representation imposed by front-end.
+*/
+template<typename valType>
+struct RLEVal {
+  valType val;
+  size_t row;
+  size_t extent;
+
+  RLEVal(valType val_,
+         size_t row_,
+         size_t extent_ = 1) : val(val_),
+			   row(row_),
+			   extent(extent_) {
+  }
+
+  RLEVal(const RLEVal<valType>& rle) :
+    val(rle.val),
+    row(rle.row),
+    extent(rle.extent) {
+  }
+
+
+  /**
+     @brief Computes end position.
+
+     @return row index beyond end.
+   */
+  size_t getRowEnd() const {
+    return row + extent;
+  }
+};
+
 
 #endif

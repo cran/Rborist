@@ -21,7 +21,7 @@
 #include <vector>
 
 #include "typeparam.h"
-
+#include "splitcoord.h"
 
 /**
    @brief Records index, start and extent for path reached from MRRA.
@@ -31,11 +31,25 @@ class NodePath {
   // Maximal path length is also an inattainable path index.
   static constexpr unsigned int noPath = 1 << logPathMax;
 
-  IndexT splitIdx; // < noIndex iff path extinct.
+  static IndexT noSplit;
+  
+  IndexT frontIdx; // < noIndex iff path extinct.
   IndexRange bufRange; // buffer target range for path.
-  unsigned int relBase; // Dense starting position.
- public:
+  IndexT idxStart; // Node starting position in upcoming level.
 
+public:
+
+
+  NodePath() : frontIdx(noSplit),
+	       bufRange(IndexRange()),
+	       idxStart(0) {
+  }
+
+
+  void init(const class Frontier* frontier,
+	    const class IndexSet& iSet);
+
+  
   /**
      @return maximal path length.
    */
@@ -44,6 +58,12 @@ class NodePath {
   }
 
 
+  /**
+     @brief Sets noSplit to inattainable split index.
+   */
+  static void setNoSplit(IndexT bagCount);
+
+  
   /**
      @brief Determines whether a path size is representable within
      container.
@@ -67,25 +87,27 @@ class NodePath {
   static inline bool isActive(unsigned int path) {
     return path != noPath;
   }
-  
-  /**
-     @brief Sets to non-extinct path coordinates.
-   */
-  inline void init(IndexT splitIdx,
-                   const IndexRange& bufRange,
-                   unsigned int relBase) {
-    this->splitIdx = splitIdx;
-    this->bufRange = bufRange;
-    this->relBase = relBase;
-  }
-  
+
 
   /**
      @brief Multiple accessor for path coordinates.
    */
-  inline IndexT getCoords(IndexRange& idxRange) const {
-    idxRange = bufRange;
-    return splitIdx;
+  inline bool getCoords(PredictorT predIdx,
+			SplitCoord& coord,
+			IndexRange& idxRange) const {
+    if (frontIdx == noSplit) {
+      return false;
+    }
+    else {
+      idxRange = bufRange;
+      coord = SplitCoord(frontIdx, predIdx);
+      return true;
+    }
+  }
+
+  inline bool getFrontIdx(IndexT& idxOut) const {
+    idxOut = frontIdx;
+    return (frontIdx != noSplit);
   }
 
   
@@ -99,25 +121,34 @@ class NodePath {
   }
   
 
-  inline unsigned int getRelBase() const {
-    return relBase;
+  inline IndexT getNodeStart() const {
+    return idxStart;
   }
 
 
   inline IndexT getSplitIdx() const {
-    return splitIdx;
+    return frontIdx;
   }
 };
 
+
+// Only defined for enclosing Levels employing node-relative indexing.
+//
+// Narrow for data locality, but wide enough to be useful.  Can
+// be generalized to multiple sizes to accommodate more sophisticated
+// hierarchies.
+//
+typedef uint_least16_t NodeRelT;
 
 class IdxPath {
   const IndexT idxLive; // Inattainable index.
   static constexpr unsigned int noPath = NodePath::pathMax();
   static constexpr unsigned int maskExtinct = noPath;
   static constexpr unsigned int maskLive = maskExtinct - 1;
-  static constexpr unsigned int relMax = 1 << 15;
-  vector<unsigned int> relFront;
-  vector<PathT> pathFront;
+  static constexpr unsigned int relMax = 1ul << 15;
+
+  vector<IndexT> smIdx; // Root- or node-relative SampleMap index.
+  vector<PathT> pathFront;  // Paths reaching the frontier.
 
   /**
      @brief Setter for path reaching an index.
@@ -126,51 +157,20 @@ class IdxPath {
 
      @param path is the reaching path.
    */
-  inline void set(IndexT idx, unsigned int path = maskExtinct) {
-    pathFront[idx] = path;
-  }
-
-  /**
-   */
   inline void set(IndexT idx,
-                  unsigned int path,
-                  unsigned int relThis,
-                  unsigned int ndOff = 0) {
+		  unsigned int path = maskExtinct) {
     pathFront[idx] = path;
-    relFront[idx] = relThis;
-    offFront[idx] = ndOff;
   }
 
 
-  inline PathT PathSucc(IndexT idx,
-                        unsigned int pathMask,
-                        bool& isLive) const {
-    isLive = this->isLive(idx);
-    return isLive ? pathFront[idx] & pathMask : noPath;
-  }
-  
-  
-  /**
-     @brief Determines whether indexed path is live and looks up
-     corresponding front index.
-
-     @param idx is the element index.
-
-     @param front outputs the front index, if live.
-
-     @return true iff path live.
-   */
-  inline bool frontLive(IndexT idx, unsigned int &front) const {
-    if (!isLive(idx)) {
-      return false;
-    }
-    else {
-      front = relFront[idx];
-      return true;
-    }
+  inline void set(IndexT idx,
+                  PathT path,
+                  IndexT smIdx) {
+    pathFront[idx] = path;
+    this->smIdx[idx] = smIdx;
   }
 
-  
+
   /**
      @brief Determines a sample's coordinates with respect to the front level.
 
@@ -182,53 +182,47 @@ class IdxPath {
    */
   inline bool copyLive(IdxPath *backRef,
                        IndexT idx,
-                       unsigned int backIdx) const {
+                       IndexT backIdx) const {
     if (!isLive(idx)) {
       return false;
     }
     else {
-      backRef->set(backIdx, pathFront[idx], relFront[idx], offFront[idx]);
+      backRef->set(backIdx, pathFront[idx], smIdx[idx]);
       return true;
     }
   }
-
-  
-  // Only defined for enclosing Levels employing node-relative indexing.
-  //
-  // Narrow for data locality, but wide enough to be useful.  Can
-  // be generalized to multiple sizes to accommodate more sophisticated
-  // hierarchies.
-  //
-  vector<uint_least16_t> offFront;
   
  public:
 
   IdxPath(IndexT idxLive_);
 
   /**
-     @brief When appropriate, introduces node-relative indexing at the
-     cost of trebling span of memory accesses:  char vs. char + uint16.
+     @brief When appropriate, localizes indexing at the cost of
+     trebling span of memory accesses:  char (PathT) vs. char + uint16.
 
      @return true iff node-relative indexing expected to be profitable.
    */
-  static inline bool localizes(unsigned int bagCount, unsigned int idxMax) {
+  static inline bool localizes(IndexT bagCount,
+			       IndexT idxMax) {
     return idxMax > relMax || bagCount <= 3 * relMax ? false : true;
   }
 
   
+  inline IndexT getMapIdx(IndexT idx) const {
+    return smIdx[idx];
+  }
+
+
   /**
      @brief Setter for path reaching an index.
 
      @param idx is the index in question.
 
      @param path is the reaching path.
-
-     @param doesReach indicates whether the path reaches an actual successor.
    */
   inline void setSuccessor(IndexT idx,
-                           unsigned int pathSucc,
-                           bool doesReach) {
-    set(idx, doesReach ? pathSucc : noPath);
+                           unsigned int pathSucc) {                       
+    set(idx, pathSucc);
   }
 
 
@@ -237,44 +231,36 @@ class IdxPath {
 
      @return shift-stamped path if live else fixed extinct mask.
    */
-  inline static unsigned int pathNext(unsigned int pathPrev, bool isLeft) {
-    return maskLive & ((pathPrev << 1) | (isLeft ? 0 : 1));
+  inline static unsigned int pathSucc(unsigned int pathPrev,
+				      bool sense) {
+    return maskLive & ((pathPrev << 1) | (sense ? 0 : 1));
   }
-  
+
+
+  inline static void pathLR(unsigned int pathPrev,
+                            PathT& pathL,
+                            PathT& pathR) {
+    pathL = maskLive & (pathPrev << 1);
+    pathR = maskLive & ((pathPrev << 1) | 1);
+  }
+
 
   /**
      @brief Revises path and target for live index.
 
-     @param idx is the current index value.
+     @param idx is the entry index.
 
      @param path is the revised path.
 
-     @param targIdx is the revised relative index.
-  */
-  inline void setLive(unsigned int idx,
-                      unsigned int path,
-                      unsigned int targIdx) {
-    set(idx, path, targIdx);
-  }
-
-  
-  /**
-     @brief Revises path and target for potentially node-relative live index.
-
-     @param idx is the current index value.
-
-     @param path
-
-     @param targIdx is the revised index.
+     @param smIdx is nascent SampleMap index:  only read node-relative.
   */
   inline void setLive(IndexT idx,
-                      unsigned int path,
-                      unsigned int targIdx,
-                      unsigned int ndOff) {
-    set(idx, path, targIdx, ndOff);
+                      PathT path,
+                      IndexT smIdx) {
+    set(idx, path, smIdx);
   }
 
-  
+
   /**
      @brief Marks path as extinct, sets front index to inattainable value.
      Other values undefined.
@@ -299,32 +285,47 @@ class IdxPath {
 
 
   /**
-     @brief Looks up the path leading to the front level and updates
-     the index, if either in a switching to a node-relative regime.
+     @brief Obtains front-layer path for an index.
 
-     @param idx inputs the path vector index and outputs the index to
-     be used in the next level.
+     @param idx indexes the path.
 
-     @return path to input index.
+     @param pathMask is obtained from the ancestor layer.
+
+     @param[out] is the succesor path.
+
+     @return true iff path is live.
    */
-  inline PathT update(unsigned int &idx, unsigned int pathMask, const unsigned int reachBase[], bool idxUpdate) const {
-    bool isLive;
-    PathT path = PathSucc(idx, pathMask, isLive);
-    if (isLive) {
-      // Avoids irregular update unless necessary:
-      idx = reachBase != nullptr ? (reachBase[path] + offFront[idx]) : (idxUpdate ? relFront[idx] : idx);
-    }
-
-    return path;
+  inline bool pathSucc(IndexT idx,
+		       unsigned int pathMask,
+		       PathT& path) const {
+    bool isLive = this->isLive(idx);
+    path = isLive ? pathFront[idx] & pathMask : noPath;
+    return isLive;
   }
 
+  /**
+     @brief Determines whether indexed path is live and looks up
+     corresponding front index.
 
+     @param idx is the element index.
+
+     @param front outputs the front index, if live.
+
+     @return true iff path live.
+   */
+  inline bool frontLive(IndexT idx,
+			IndexT &front) const {
+    front = smIdx[idx];
+    return isLive(idx);
+  }
+
+  
   /**
      @brief Resets front coordinates using first level's map.
 
      @param one2Front maps first level's coordinates to front.
    */
-  inline void backdate(const IdxPath *one2Front) {
+  inline void backdate(const IdxPath* one2Front) {
     for (IndexT idx = 0; idx < idxLive; idx++) {
       IndexT oneIdx;
       if (frontLive(idx, oneIdx)) {

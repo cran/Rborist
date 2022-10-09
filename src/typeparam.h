@@ -20,6 +20,7 @@
 
 #include <memory>
 #include <utility>
+#include <cmath>
 
 using namespace std;
 
@@ -30,41 +31,69 @@ typedef float FltVal;
 typedef double FltAccum;
 
 
+// Wide container type for packed values.
+typedef uint64_t PackedT;
+
 // Index type:  rows, samples, ranks, run counts.
-// Should be wide enough to accommodate values approaching # observations.
+// Should be wide enough to accommodate values approaching #
+// observations.
+//
+// Can be set to size_t for observation counts > 32 bits, but Rcpp's
+// sampling methods do not currently accommodate such large sizes.
+// Setting to size_t may also incur performance penalties, roughly
+// 5% more memory usage and 10% reduction in speed.
+//
 typedef unsigned int IndexT; 
 
-// Predictor type:  columns, # runs, caridinalities.
-// Should accommodate values approaching # predictors or properties.
+// Predictor type:  # columns.
+// Should accommodate values approaching # predictors.
 typedef unsigned int PredictorT;
 
-// Low/extent pair definining range of indices.
+
+// Category cardinalities:  under construction.
+typedef unsigned int CtgT;
+
+
+// Low/extent pair defining range of indices.
 struct IndexRange {
-  IndexT idxLow;
+  IndexT idxStart;
   IndexT idxExtent;
 
 
   IndexRange() :
-    idxLow(0),
+    idxStart(0),
     idxExtent(0) {
   }
 
-  IndexRange(IndexT idxLow_,
+  IndexRange(IndexT idxStart_,
 	     IndexT idxExtent_) :
-    idxLow(idxLow_),
+    idxStart(idxStart_),
     idxExtent(idxExtent_) {
   }
 
 
+  /**
+     @brief Tests for uninitialized range.
+
+     @return true iff extent has value zero.
+   */
+  inline bool empty() const {
+    return idxExtent == 0;
+  }
+
+
+  /**
+     @brief Decrements bounds incurred through sparsification.
+   */
   void adjust(IndexT margin,
               IndexT implicit) {
-    idxLow -= margin;
+    idxStart -= margin;
     idxExtent -= implicit;
   }
 
 
   IndexT getStart() const {
-    return idxLow;
+    return idxStart;
   }
   
 
@@ -75,10 +104,12 @@ struct IndexRange {
 
 
   /**
+     @brief Computes iterator-style end position.
+
      @return end position.
    */
   IndexT getEnd() const {
-    return idxLow + idxExtent;
+    return idxStart + idxExtent;
   }
 
 
@@ -90,11 +121,30 @@ struct IndexRange {
      @return fractional scaled position.
    */
   double interpolate(double scale) const {
-    return idxLow + scale * idxExtent;
+    return idxStart + scale * idxExtent;
   }
 };
 
 
 typedef unsigned char PathT;
 
+/**
+   @brief Template parametrization; specialization for double.
+ */
+template<typename tn>
+bool areEqual(const tn& val1,
+	      const tn& val2) {
+  return val1 == val2;
+}
+
+
+/**
+   @brief Double override to check for NaN.
+ */
+inline bool areEqual(const double& val1,
+	      const double& val2) {
+  return ((val1 == val2) || (isnan(val1) && isnan(val2)));
+}
+
+  
 #endif

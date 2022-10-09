@@ -21,43 +21,28 @@
 
 #include <vector>
 
+/**
+   Candidate selection for Random Forest algorithm.
+ */
+struct CandRF : public Cand {
 
-class CandRF : public Cand {
+  CandRF(class InterLevel* interLevel);
+
+  
+  static void init(PredictorT feFixed,
+		   const vector<double>& feProb);
+
+  static void deInit();
+
+  
+  void precandidates(const class Frontier* frontier,
+		     class InterLevel* interLevel);
+
+
+private:
   // Predictor sampling paraemters.
   static PredictorT predFixed;
   static vector<double> predProb;
-
-
-  void
-  candidateProb(class SplitFrontier* splitFroniter,
-		const class DefMap* bottom,
-		IndexT splitIdx,
-		const double ruPred[],
-		vector<DefCoord>& preCand) const;
-
-  void
-  candidateFixed(class SplitFrontier* splitFrontier,
-		 const class DefMap* bottom,
-		 IndexT splitIdx,
-		 const double ruPred[],
-		 struct BHPair heap[],
-		 vector<DefCoord>& preCand) const;
-
- public:
-
-  ~CandRF() {
-  }
-  
-  static void
-  init(PredictorT feFixed,
-       const vector<double>& feProb);
-
-  static void
-  deInit();
-
-  vector<DefCoord>
-  precandidates(class SplitFrontier* splitFrontier,
-		const class DefMap* bottom) const;
 };
 
 #endif

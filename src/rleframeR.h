@@ -1,19 +1,19 @@
-// Copyright (C)  2012-2019  Mark Seligman
+// Copyright (C)  2012-2022  Mark Seligman
 //
-// This file is part of framemapR.
+// This file is part of deframeR.
 //
-// framemapR is free software: you can redistribute it and/or modify it
+// deframeR is free software: you can redistribute it and/or modify it
 // under the terms of the GNU General Public License as published by
 // the Free Software Foundation, either version 2 of the License, or
 // (at your option) any later version.
 //
-// framemapR is distributed in the hope that it will be useful, but
+// deframeR is distributed in the hope that it will be useful, but
 // WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 // GNU General Public License for more details.
 //
 // You should have received a copy of the GNU General Public License
-// along with framemapR.  If not, see <http://www.gnu.org/licenses/>.
+// along with deframeR.  If not, see <http://www.gnu.org/licenses/>.
 
 /**
    @file rleframeR.h
@@ -25,11 +25,8 @@
  */
 
 
-#ifndef FRAMEMAPR_RLEFRAMER_H
-#define FRAMEMAPR_RLEFRAMER_H
-
-#include "rleframe.h"
-#include "summaryframe.h"
+#ifndef DEFRAMER_RLEFRAMER_H
+#define DEFRAMER_RLEFRAMER_H
 
 #include <Rcpp.h>
 using namespace Rcpp;
@@ -38,14 +35,8 @@ using namespace Rcpp;
 #include <memory>
 using namespace std;
 
-/**
-   @brief External entry to presorting RankedFrame builder.
-
-   @param sFrame is an R-style List containing frame block.
-
-   @return R-style representation of run-length encoding.
- */
-RcppExport SEXP Presort(SEXP sFrame);
+#include "rleframe.h"
+#include "block.h"
 
 
 /**
@@ -67,16 +58,72 @@ struct RLEFrameR {
    */
   static List checkNumRanked(SEXP sNumRanked);
 
+  /**
+     @brief As above, but checks factor representation.
+   */
+  static List checkFacRanked(SEXP sFacRanked);
+
 
   /**
-     @brief Static entry to block sorting.
+     @brief Sorts data frame in blocks of like type.
 
-     @param frame summarizes the predictor blocking scheme.
+     @param df is the data frame.
+
+     @param lSigTrain is a training signature, possibly null.
+
+     @param lLevel are factor levels, if any.
+   */
+  static List presortDF(const DataFrame& df,
+		        SEXP sSigTrain,
+			SEXP sLevel);
+
+  /**
+     @brief Maps factor encodings of current observation set to those of training.
+
+     Employs proxy values for any levels unseen during training.
+
+     @param df is a data frame.
+
+     @param sLevel contain the level strings of core-indexed factor predictors.
+
+     @param sSigTrain holds the training signature.
+
+     @return rewritten data frame.
+  */
+  static IntegerMatrix factorReconcile(const DataFrame& df,
+				       const List& lSigTrain,
+				       const List& lLevel);
+
+
+  static IntegerVector columnReconcile(const IntegerVector& dfCol,
+				       const CharacterVector& colTest,
+				       const CharacterVector& colTrain);
+
+
+  /**
+     @brief Presorts a block of numeric values.
+
+     @param sX is the front end's matrix representation.
 
      @return R-style list of sorting summaries.
    */
-  static List presort(const List& frame);
+  static List presortNum(SEXP sX);
 
+
+  /**
+     @brief Presorts a block of factor values.
+
+     Parameters as above.
+   */
+  static List presortFac(SEXP sX);
+
+
+  /**
+     @brief Presorts a dcgMatrix encoded with 'I' and 'P' descriptors.
+   */
+  static List presortIP(const class BlockIPCresc<double>* rleCrescIP,
+			size_t nRow,
+			unsigned int nPred);
 
   /**
      @brief Produces an R-style run-length encoding of the frame.
@@ -84,6 +131,25 @@ struct RLEFrameR {
      @param rleCresc is the crescent encoding.
    */
   static List wrap(const class RLECresc* rleCresc);
+
+  
+  static List wrapRF(const class RLECresc* rleCresc);
+
+
+  static List wrapNum(const class RLECresc* rleCresc);
+
+  
+  static List wrapFac(const class RLECresc* rleCresc);
+
+  
+  static unique_ptr<RLEFrame> unwrap(const List& lDeframe);
+
+
+  static unique_ptr<RLEFrame> unwrapFrame(const List& rankedFrame,
+					  const NumericVector& numVal,
+					  const IntegerVector& numHeight,
+					  const IntegerVector& facVal,
+					  const IntegerVector& facHeight);
 };
 
 #endif

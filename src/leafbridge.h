@@ -13,101 +13,78 @@
    @author Mark Seligman
  */
 
-#ifndef CORE_BRIDGE_LEAFBRIDGE_H
-#define CORE_BRIDGE_LEAFBRIDGE_H
+#ifndef FOREST_BRIDGE_LEAFBRIDGE_H
+#define FOREST_BRIDGE_LEAFBRIDGE_H
 
+#include <memory>
+#include <vector>
+
+using namespace std;
+
+/**
+   @brief Hides class Sampler internals from bridge via forward declarations.
+ */
 struct LeafBridge {
+  static unique_ptr<LeafBridge> FactoryTrain(const struct SamplerBridge* sb,
+					     bool thin);
+
+
+  static unique_ptr<LeafBridge> FactoryPredict(const struct SamplerBridge* samplerBridge,
+					       bool thin,
+					       const double extent_[],
+					       const double index_[]);
+
+
+  LeafBridge(const struct SamplerBridge* sb,
+	     bool thin);
+  
+
+  LeafBridge(const struct SamplerBridge* samplerBridge,
+	     bool thin,
+	     vector<vector<size_t>> extent,
+	     vector<vector<vector<size_t>>> index);
+
+
+  ~LeafBridge();
+
+
+  struct Leaf* getLeaf() const;
+  
+
+  
+  static vector<vector<size_t>> unpackExtent(const struct SamplerBridge* samplerBridge,
+					     bool thin,
+					     const double numVal[]);
+
+  
+  static vector<vector<vector<size_t>>> unpackIndex(const struct SamplerBridge* samplerBridge,
+						    bool thin,
+						    const vector<vector<size_t>>& extent,
+						    const double numVal[]);
+
+
   /**
-     @brief Getter for number of rows under prediction.
+     @brief Copies leaf extents as doubles.
    */
-  size_t getRowPredict() const;
+  void dumpExtent(double extentOut[]) const;
 
-  virtual ~LeafBridge() {
-  }
+  
 
-
-  virtual class LeafFrame* getLeaf() const = 0;
-};
-
-
-struct LeafRegBridge : public LeafBridge {
-
-  LeafRegBridge(const unsigned int* height,
-                unsigned int nTree,
-                const unsigned char* node,
-                const unsigned int* bagHeight,
-                const unsigned char* bagSample,
-                const double* yTrain,
-                size_t rowTrain,
-                double trainMean,
-                size_t predictRow);
-
-  ~LeafRegBridge();
-
-
-  void dump(const struct BagBridge* bagBridge,
-            vector<vector<size_t> >& rowTree,
-            vector<vector<unsigned int> >& sCountTree,
-            vector<vector<double> >& scoreTree,
-            vector<vector<unsigned int> >& extentTree) const;
-
-
+  size_t getExtentSize() const;
+  
   /**
-     @brief Pass-through to core method.
+     @brief Copies sample indices as doubles.
    */
-  const vector<double>& getYPred() const;
+  void dumpIndex(double indexOut[]) const;
 
-  class LeafFrame* getLeaf() const;
+
+  size_t getIndexSize() const;
+  
 
 private:
-  unique_ptr<class LeafFrameReg> leaf;
-};
-
-
-struct LeafCtgBridge : public LeafBridge {
-
-  LeafCtgBridge(const unsigned int* height,
-                unsigned int nTree,
-                const unsigned char* node,
-                const unsigned int* bagHeight,
-                const unsigned char* bagSample,
-                const double* weight,
-                unsigned int ctgTrain,
-                size_t rowPredict,
-                bool doProb);
-
-  ~LeafCtgBridge();
-
   
-  /**
-     @brief Dumps bagging and leaf information into per-tree vectors.
-   */
-  void dump(const struct BagBridge* bagBridge,
-            vector<vector<size_t> > &rowTree,
-            vector<vector<unsigned int> > &sCountTree,
-            vector<vector<double> > &scoreTree,
-            vector<vector<unsigned int> > &extentTree,
-            vector<vector<double> > &_probTree) const;
+  unique_ptr<struct Leaf> leaf;
 
-  class LeafFrame* getLeaf() const;
-
-  void vote();
-
-  const unsigned int* getCensus() const;
-  
-  const vector<unsigned int>& getYPred() const;
-
-  unsigned int getCtgTrain() const;
-
-  const vector<double>& getProb() const;
-  
-  unsigned int getYPred(size_t row) const;
-  
-  unsigned int ctgIdx(unsigned int ctgTest,
-                      unsigned int ctgPred) const;
-  
-private:
-  unique_ptr<class LeafFrameCtg> leaf;
 };
 
 #endif

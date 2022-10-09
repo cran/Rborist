@@ -13,15 +13,16 @@
    @author Mark Seligman
  */
 
-#ifndef CORE_BRIDGE_PREDICTBRIDGE_H
-#define CORE_BRIDGE_PREDICTBRIDGE_H
+#ifndef FOREST_BRIDGE_PREDICTBRIDGE_H
+#define FOREST_BRIDGE_PREDICTBRIDGE_H
 
-#include "block.h"
 
 #include <vector>
 #include <memory>
 
 using namespace std;
+
+
 
 /**
    @brief Consolidates common components required by all prediction entries.
@@ -36,46 +37,64 @@ struct PredictBridge {
 
      Remaining parameters mirror similarly-named members.
    */
-  PredictBridge(bool oob,
+  PredictBridge(unique_ptr<struct RLEFrame> rleFrame_,
                 unique_ptr<struct ForestBridge> forest_,
-                unique_ptr<struct BagBridge> bag_,
-                unique_ptr<struct LeafBridge> leaf_,
-                unsigned int nThread);
+		unsigned int nPermute,
+		unsigned int nThread);
 
-  PredictBridge(bool oob,
-                unique_ptr<struct ForestBridge> forest_,
-                unique_ptr<struct BagBridge> bag_,
-                unique_ptr<struct LeafBridge> leaf_,
-                const vector<double>& quantile,
-                unsigned int nThread);
+  virtual ~PredictBridge();
 
-  ~PredictBridge();
+  
+  size_t getNRow() const;
+
+
+  bool permutes() const;
+
+
+protected:
+  unique_ptr<struct RLEFrame> rleFrame; // Local ownership
+  unique_ptr<struct ForestBridge> forestBridge; // Local ownership.
+  const unsigned int nPermute; // # times to permute.
+};
+
+
+struct PredictRegBridge : public PredictBridge {
+  PredictRegBridge(unique_ptr<struct RLEFrame> rleFrame_,
+		   unique_ptr<struct ForestBridge> forestBridge_,
+		   unique_ptr<struct SamplerBridge> samplerBridge_,
+		   unique_ptr<struct LeafBridge> leafBridge_,
+		   vector<double> yTest,
+		   unsigned int nPermute_,
+		   bool trapUnobserved,
+		   unsigned int nThread,
+		   vector<double> quantile_);
+
+  ~PredictRegBridge(); // Forward declaration:  not specified default.
+
 
   /**
-     @brief Gets an acceptable block row count.
+     @brief External entry for prediction.
 
-     @param rowCount is a requested count.
-
-     @return count of rows in block.
+     May be parametrized for separate entry in distributed setting.
    */
-  static size_t getBlockRows(size_t rowCount);
+  void predict() const;
 
 
-  /**
-     @brief Predicts over a block of observations.
+  double getSAE() const;
 
-     @param blockNum collects numerical observations.
 
-     @param blockFac collects factor-valued observations.
+  double getSSE() const;
 
-     @param row is the beginning row index of the block.
-   */
-  void predictBlock(const BlockDense<double>* blockNum,
-                    const BlockDense<unsigned int>* blockFac,
-                    size_t row) const;
 
-  struct LeafBridge* getLeaf() const;
+  const vector<double>& getSSEPermuted() const;
 
+  
+  const vector<double>& getYTest() const;
+  
+
+  const vector<double>& getYPred() const;
+  
+  
   /**
      @return vector of predection quantiles iff quant non-null else empty.
    */
@@ -87,11 +106,67 @@ struct PredictBridge {
   const vector<double> getQEst() const;
   
 private:
-  unique_ptr<struct BagBridge> bag;
-  unique_ptr<struct ForestBridge> forest;
-  unique_ptr<struct LeafBridge> leaf;
-  unique_ptr<class Quant> quant;
-  unique_ptr<class Predict> predictCore;
+  unique_ptr<struct SamplerBridge> samplerBridge; // Local ownership.
+  unique_ptr<struct LeafBridge> leafBridge;
+  unique_ptr<class PredictReg> predictRegCore;
+};
+
+
+struct PredictCtgBridge : public PredictBridge {
+  PredictCtgBridge(unique_ptr<struct RLEFrame> rleFrame_,
+		   unique_ptr<struct ForestBridge> forestBridge_,
+		   unique_ptr<SamplerBridge> samplerBridge_,
+		   unique_ptr<struct LeafBridge> leafBridge_,
+		   vector<unsigned int> yTest,
+		   unsigned int nPermute_,
+		   bool doProb,
+		   bool trapUnobserved,
+		   unsigned int nThread);
+
+  ~PredictCtgBridge(); // Forward declaration:  not specified default.
+
+
+  const vector<unsigned int>& getYPred() const;
+
+
+  const vector<size_t>& getConfusion() const;
+
+
+  const vector<double>& getMisprediction() const;
+
+
+  const vector<vector<double>>& getMispredPermuted() const;
+  
+
+  double getOOBError() const;
+
+
+  const vector<double>& getOOBErrorPermuted() const;
+  
+
+  /**
+     @brief External entry for prediction.
+
+     May be parametrized for separate entry in distributed setting.
+   */
+  void predict() const;
+
+  unsigned int ctgIdx(unsigned int ctgTest,
+                      unsigned int ctgPred) const;
+  
+
+  const unsigned int* getCensus() const;
+  
+
+  const vector<double>& getProb() const;
+  
+
+private:
+  unique_ptr<struct SamplerBridge> samplerBridge; // Local ownership.
+  unique_ptr<struct LeafBridge> leafBridge; // " "
+  unique_ptr<class PredictCtg> predictCtgCore;
+
+
 };
 
 

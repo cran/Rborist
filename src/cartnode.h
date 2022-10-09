@@ -17,161 +17,69 @@
 #ifndef CART_CARTNODE_H
 #define CART_CARTNODE_H
 
-#include "crit.h"
+#include "treenode.h"
 
 
 /**
    @brief To replace parallel array access.
  */
-struct CartNode {
-\
-  /**
-     @brief Nodes must be explicitly set to non-terminal (lhDel != 0).
-   */
-  CartNode() : lhDel(0) {
-  }
-  
-  /**
-     @brief Getter for splitting predictor.
+struct CartNode : public TreeNode {
 
-     @return splitting predictor index.
+  /**
+     @brief Nodes must be explicitly set to non-terminal (delIdx != 0).
    */
-  inline PredictorT getPredIdx() const {
-    return criterion.predIdx;
+ CartNode() : TreeNode() {
   }
 
 
-  /**
-     @brief Getter for numeric splitting value.
-
-     @return splitting value.
-   */
-  inline auto getSplitNum() const {
-    return criterion.getNumVal();
-  }
-
-
-  /**
-     @return first bit position of split.
-   */
-  inline auto getSplitBit() const {
-    return criterion.getBitOffset();
+ CartNode(complex<double> pair) :
+  TreeNode(pair) {
   }
   
 
   /**
-     @brief Advances to next node when observations are all numerical.
-
-     @param rowT is a row base within the transposed numerical set.
-
-     @param[out] leafIdx outputs predictor index iff at terminal.
-
-     @return delta to next node, if nonterminal, else zero.
+     @return pretree index of true branch target.
    */
-  inline IndexT advance(const double *rowT,
-			IndexT& leafIdx) const {
-    auto predIdx = getPredIdx();
-    if (lhDel == 0) {
-      leafIdx = predIdx;
-      return 0;
-    }
-    else {
-      return rowT[predIdx] <= getSplitNum() ? lhDel : lhDel + 1;
-    }
+  inline IndexT getIdTrue(IndexT ptId) const {
+    return isNonterminal() ? ptId + getDelIdx() : 0;
   }
-
-  /**
-     @brief Node advancer, as above, but for all-categorical observations.
-
-     @param facSplit accesses the per-tree packed factor-splitting vectors.
-
-     @param rowT holds the transposed factor-valued observations.
-
-     @param tIdx is the tree index.
-
-     @param leafIdx as above.
-
-     @return terminal/nonterminal : 0 / delta to next node.
-   */
-  IndexT advance(const class BVJagged *facSplit,
-		 const IndexT* rowT,
-		 unsigned int tIdx,
-		 IndexT& leafIdx) const;
   
-  /**
-     @brief Node advancer, as above, but for mixed observation.
-
-     Parameters as above, along with:
-
-     @param rowNT contains the transponsed numerical observations.
-
-     @return terminal/nonterminal : 0 / delta to next node.
-   */
-  IndexT advance(const class PredictFrame* blockFrame,
-		 const BVJagged *facSplit,
-		 const IndexT* rowFT,
-		 const double *rowNT,
-		 unsigned int tIdx,
-		 IndexT& leafIdx) const;
-
 
   /**
-     @brief Interplates split values from fractional intermediate rank.
-
-     @param summaryFrame identifies numeric-valued predictors.
+     @return pretree index of false branch target.
    */
-  void setQuantRank(const class SummaryFrame* summaryFrame);
-
-  
-  /**
-     @brief Copies decision node, converting offset to numeric value.
-
-     @param lhDel is the relative displacement of the left-hand branch.
-
-     @param crit encodes the splitting criterion.
-   */
-  inline void setBranch(IndexT lhDel,
-                        const Crit& crit) {
-    this->lhDel = lhDel;
-    criterion = crit;
+  inline IndexT getIdFalse(IndexT ptId) const {
+    return isNonterminal() ? ptId + getDelIdx() + 1 : 0;
   }
 
 
   /**
-     @brief Resets as leaf node.
-
-     @param leafIdx is the tree-relative leaf index.
+     @brief Advancers pass through to the base class.
    */
-  inline void setLeaf(IndexT leafIdx) {
-    lhDel = 0;
-    criterion.predIdx = leafIdx;
-    criterion.setNum(0.0);
+  inline IndexT advance(const double* rowT,
+			bool trapUnobserved) const {
+    return isTerminal() ? 0 : TreeNode::advanceNum(rowT[getPredIdx()], trapUnobserved);
   }
 
 
-  /**
-     @brief Indicates whether node is nonterminal.
-
-     @return True iff lhDel value is nonzero.
-   */
-  inline bool isNonterminal() const {
-    return lhDel != 0;
-  }  
-
-
-  /**
-     @brief Getter for lh-delta value.
-
-     @return lhDel value.
-   */
-  inline auto getLHDel() const {
-    return lhDel;
+  inline IndexT advance(const vector<unique_ptr<class BV>>& factorBits,
+			const vector<unique_ptr<class BV>>& bitsObserved,
+			const CtgT* rowT,
+			unsigned int tIdx,
+			bool trapUnobserved) const {
+    return isTerminal() ? 0 : TreeNode::advanceFactor(factorBits, bitsObserved, rowT, tIdx, trapUnobserved);
   }
 
-  
-private:
-  IndexT lhDel;  // Delta to LH subnode. Nonzero iff non-terminal.
-  Crit criterion;
+
+  inline IndexT advance(const class Predict* predict,
+			const vector<unique_ptr<class BV>>& factorBits,
+			const vector<unique_ptr<class BV>>& bitsObserved,
+			const CtgT* rowFT,
+			const double *rowNT,
+			unsigned int tIdx,
+			bool trapUnobserved) const {
+    return isTerminal() ? 0 : TreeNode::advanceMixed(predict, factorBits, bitsObserved, rowFT, rowNT, tIdx, trapUnobserved);
+  }
 };
 
 #endif

@@ -11,14 +11,13 @@
 /**
    @file cand.h
 
-   @brief Manages non-specific splitting candidate selection.
+   @brief Manages generic splitting candidate selection.
 
    @author Mark Seligman
-
  */
 
-#include "splitcoord.h"
 #include "typeparam.h"
+#include "splitcoord.h"
 
 #include <vector>
 
@@ -26,12 +25,81 @@
    @brief Minimal information needed to preschedule a splitting candidate.
  */
 
-class Cand {
-public:
+/**
+   @brief Minimal information needed to define a splitting pre=candidate.
+ */
+struct PreCand {
+  SplitCoord coord;
+  uint32_t randVal; // Arbiter for tie-breaking and the like.
   
-  virtual vector<DefCoord>
-  precandidates(class SplitFrontier* splitFrontier,
-		const class DefMap* bottom) const;
+  /**
+     @brief ObsCell component initialized at construction, StagedCell at (re)staging.
+   */
+  PreCand(const SplitCoord& coord_,
+	  uint32_t randVal_) :
+    coord(coord_),
+    randVal(randVal_) {
+  }
+
+  
+  PredictorT getNodeIdx() const {
+    return coord.nodeIdx;
+  }
+};
+
+
+struct Cand {
+  const IndexT nSplit;
+  const PredictorT nPred;
+
+  vector<vector<PreCand>> preCand;
+
+  Cand(const class InterLevel* interLevel);
+  
+
+  void precandidates(const class Frontier* frontier,
+		     class InterLevel* interLevel);
+
+
+  /**
+     @brief Accepts all eligible pairs as precandidates.
+   */
+  void candidateCartesian(const class Frontier* frontier,
+			  class InterLevel* interLevel);
+
+
+  /**
+     @brief Accepts precandidates using Bernoulli sampling.
+   */
+  void candidateBernoulli(const class Frontier* frontier,
+			  class InterLevel* interLevel,
+			  const vector<double>& predProb);
+
+  /**
+     @brief Samples fixed number of precandidates without replacement.
+   */
+  void candidateFixed(const class Frontier* frontier,
+		      class InterLevel* interLevel,
+		      PredictorT predFixed);
+
+  vector<class SplitNux> getCandidates(const class InterLevel* interLevel,
+				       const class SplitFrontier* splitFrontier);
+
+
+  /**
+     @brief Extracts the 32 lowest-order mantissa bits of a double-valued
+     random variate.
+
+     The double-valued variants passed are used by the caller to arbitrate
+     variable sampling and are unlikely to rely on more than the first
+     few mantissa bits.  Hence using the low-order bits to arbitrate other
+     choices is unlikely to introduce spurious correlations.
+   */
+  inline static unsigned int getRandLow(double rVal) {
+    union { double d; uint32_t ui[2]; } u = {rVal};
+    
+    return u.ui[0];
+  }
 };
 
 #endif

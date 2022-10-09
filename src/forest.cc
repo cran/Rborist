@@ -16,52 +16,137 @@
 
 #include "bv.h"
 #include "forest.h"
+#include "ompthread.h"
 
 
-Forest::Forest(const IndexT height_[],
-	       unsigned int nTree_,
-               const DecNode treeNode_[],
-	       PredictorT facVec_[],
-               const IndexT facHeight_[]) :
-  nodeHeight(height_),
-  nTree(nTree_),
-  treeNode(treeNode_),
-  facSplit(make_unique<BVJagged>(facVec_, facHeight_, nTree)) {
+Forest::Forest(vector<vector<DecNode>> decNode_,
+	       vector<vector<double>> scores_,
+	       vector<unique_ptr<BV>> factorBits_,
+	       vector<unique_ptr<BV>> bitsObserved_) :
+  nTree(decNode_.size()),
+  decNode(std::move(decNode_)),
+  scores(std::move(scores_)),
+  factorBits(std::move(factorBits_)),
+  bitsObserved(std::move(bitsObserved_)) {
 }
 
 
-Forest::~Forest() {
+void FBCresc::appendBits(const BV& splitBits_,
+			 const BV& observedBits_,
+			 size_t bitEnd) {
+  size_t nSlot = splitBits_.appendSlots(splitBits, bitEnd);
+  (void) observedBits_.appendSlots(observedBits, bitEnd);
+  extents.push_back(nSlot);
 }
 
 
-vector<size_t> Forest::cacheOrigin() const {
-  vector<size_t> origin(nTree);
+vector<size_t> Forest::produceHeight(const vector<size_t>& extents) const {
+  vector<size_t> heights(nTree);
+  size_t heightAccum = 0;
   for (unsigned int tIdx = 0; tIdx < nTree; tIdx++) {
-    origin[tIdx] = tIdx == 0 ? 0 : nodeHeight[tIdx-1];
+    heightAccum += extents[tIdx];
+    heights[tIdx] = heightAccum;
   }
-  return origin;
+  return heights;
 }
 
 
-void Forest::dump(vector<vector<PredictorT> > &predTree,
-                  vector<vector<double> > &splitTree,
-                  vector<vector<IndexT> > &lhDelTree,
-                  vector<vector<IndexT> > &facSplitTree) const {
-  dump(predTree, splitTree, lhDelTree);
-  facSplit->dump(facSplitTree);
+size_t Forest::maxTreeHeight() const {
+  size_t maxHeight = 0;
+  for (unsigned int tIdx = 0; tIdx < decNode.size(); tIdx++) {
+    maxHeight = max(maxHeight, decNode[tIdx].size());
+  }
+  return maxHeight;
 }
 
 
-void Forest::dump(vector<vector<PredictorT> > &pred,
-                  vector<vector<double> > &split,
-                  vector<vector<IndexT> > &lhDel) const {
-  for (unsigned int tIdx = 0; tIdx < nTree; tIdx++) {
-    for (IndexT nodeIdx = 0; nodeIdx < getNodeHeight(tIdx); nodeIdx++) {
-      pred[tIdx].push_back(treeNode[nodeIdx].getPredIdx());
-      lhDel[tIdx].push_back(treeNode[nodeIdx].getLHDel());
+void Forest::dump(vector<vector<PredictorT> >& predTree,
+                  vector<vector<double> >& splitTree,
+                  vector<vector<size_t> >& delIdxTree,
+		  IndexT& dummy) const {
+  dump(predTree, splitTree, delIdxTree);
+}
 
-      // Not quite:  must distinguish numeric from bit-packed:
-      split[tIdx].push_back(treeNode[nodeIdx].getSplitNum());
+
+void Forest::dump(vector<vector<PredictorT> >& pred,
+                  vector<vector<double> >& split,
+                  vector<vector<size_t> >& delIdx) const {
+  for (unsigned int tIdx = 0; tIdx < decNode.size(); tIdx++) {
+    for (IndexT nodeIdx = 0; nodeIdx < decNode[tIdx].size(); nodeIdx++) {
+      pred[tIdx].push_back(decNode[tIdx][nodeIdx].getPredIdx());
+      delIdx[tIdx].push_back(decNode[tIdx][nodeIdx].getDelIdx());
+
+      // N.B.:  split field must fit within a double.
+      split[tIdx].push_back(decNode[tIdx][nodeIdx].getSplitNum());
     }
   }
+}
+
+
+vector<IndexT> Forest::getLeafNodes(unsigned int tIdx,
+				    IndexT extent) const {
+  vector<IndexT> leafIndices(extent);
+  IndexT nodeIdx = 0;
+  for (auto node : decNode[tIdx]) {
+    IndexT leafIdx;
+    if (node.getLeafIdx(leafIdx)) {
+      leafIndices[leafIdx] = nodeIdx;
+    }
+    nodeIdx++;
+  }
+
+  return leafIndices;
+}
+
+
+vector<vector<IndexRange>> Forest::leafDominators() const {
+  vector<vector<IndexRange>> leafDom(nTree);
+  
+#pragma omp parallel default(shared) num_threads(OmpThread::nThread)
+  {
+#pragma omp for schedule(dynamic, 1)
+  for (unsigned int tIdx = 0; tIdx < nTree; tIdx++) {
+    leafDom[tIdx] = leafDominators(decNode[tIdx]);
+  }
+  }
+  return leafDom;
+}
+  
+  
+vector<IndexRange> Forest::leafDominators(const vector<DecNode>& tree) {
+  IndexT height = tree.size();
+  // Gives each node the offset of its predecessor.
+  vector<IndexT> delPred(height);
+  for (IndexT i = 0; i < height; i++) {
+    IndexT delIdx = tree[i].getDelIdx();
+    if (delIdx != 0) {
+      delPred[i + delIdx] = delIdx;
+      delPred[i + delIdx + 1] = delIdx + 1;
+    }
+  }
+
+  // Pushes dominated leaf count up the tree.
+  vector<IndexT> leavesBelow(height);
+  for (IndexT i = height - 1; i > 0; i--) {
+    leavesBelow[i] += (tree[i].isNonterminal() ? 0: 1);
+    leavesBelow[i - delPred[i]] += leavesBelow[i];
+  }
+
+  // Pushes index ranges down the tree.
+  vector<IndexRange> leafDom(height);
+  leafDom[0] = IndexRange(0, leavesBelow[0]); // Root dominates all leaves.
+  for (IndexT i = 0; i < height; i++) {
+    IndexT delIdx = tree[i].getDelIdx();
+    if (delIdx != 0) {
+      IndexRange leafRange = leafDom[i];
+      IndexT idxTrue = i + delIdx;
+      IndexT trueStart = leafRange.getStart();
+      leafDom[idxTrue] = IndexRange(trueStart, leavesBelow[idxTrue]);
+      IndexT idxFalse = idxTrue + 1;
+      IndexT falseStart = leafDom[idxTrue].getEnd();
+      leafDom[idxFalse] = IndexRange(falseStart, leavesBelow[idxFalse]);
+    }
+  }
+
+  return leafDom;
 }

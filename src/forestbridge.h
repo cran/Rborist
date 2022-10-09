@@ -13,45 +13,59 @@
    @author Mark Seligman
  */
 
-#ifndef CART_FORESTBRIDGE_H
-#define CART_FORESTBRIDGE_H
+#ifndef FOREST_FORESTBRIDGE_H
+#define FOREST_FORESTBRIDGE_H
 
+
+#include <vector>
 #include <memory>
+#include <complex>
+
 using namespace std;
 
 /**
    @brief Hides class Forest internals from bridge via forward declarations.
  */
 struct ForestBridge {
-
+  
   /**
-     @brief Constructor wraps constant raw pointers provided by front end.
+     @brief R-specific constructor.  Doubles cache large offset values.
 
      It is the responsibility of the front end and/or its bridge to ensure
-     that aliased memory remains live.
+     that aliased memory either remains live or is copied.
 
-     @param height is the accumulated tree height preceding a given tree.
+     @param nodeExtent[] is the per-tree node count.
 
-     @param node contains the packed decision trees.
+     @param treeNode caches the nodes as packed-integer / double pairs.
+
+     @param scores cache the score at each node, regardless whether terminal.
+
+     @param facExtent the per-tree count of factor-valued splits.
 
      @param facSplit contains the splitting bits for factors.
-
-     @param facHeight is the accumated factor splitting height.
-
    */
-  ForestBridge(const unsigned int* height,
-               size_t nTree,
-               const unsigned char* node,
-               unsigned int* facSplit,
-               const unsigned int* facHeight);
-
-  ~ForestBridge();
+  ForestBridge(unsigned int nTree,
+	       const double nodeExtent[],
+	       const complex<double> treeNode[],
+	       const double scores[],
+	       const double facExtent[],
+               const unsigned char facSplit[],
+	       const unsigned char facObserved[]);
 
 
   /**
-     @brief Returns size of CartNode.
+     @brief Training constructor.
    */
-  static size_t nodeSize();
+  ForestBridge(unsigned int treeChunk);
+
+  
+  ~ForestBridge();
+
+  
+  /**
+     @return count of trained nodes.
+   */
+  size_t getNodeCount() const;
 
   
   /**
@@ -66,13 +80,51 @@ struct ForestBridge {
   unsigned int getNTree() const;
 
 
+  const vector<size_t>& getNodeExtents() const;
+
+
+  const vector<size_t>& getFacExtents() const;
+
+  
+  /**
+     @brief Passes through to Forest method.
+
+     @return # bytes in current chunk of factors.
+   */
+  size_t getFactorBytes() const;
+  
+
+  /**
+     @brief Dumps the tree nodes into a fixed-size complex-valued buffer.
+   */
+  void dumpTree(complex<double> treeOut[]) const;
+
+  
+  /**
+     @brief Dumps the scores into a fixed-size numeric buffer.
+   */
+  void dumpScore(double scoreOut[]) const;
+  
+
+  /**
+     @brief Dumps the splitting bits into a fixed-size raw buffer.
+   */
+  void dumpFactorRaw(unsigned char facOut[]) const;
+
+  
+  /**
+     @brief Dumps the observed bits into a fixed-sized raw buffer.
+   */
+  void dumpFactorObserved(unsigned char obsOut[]) const;
+  
+
   /**
      @brief Dumps the forest into per-tree vectors.
    */
   void dump(vector<vector<unsigned int> >& predTree,
             vector<vector<double> >& splitTree,
-            vector<vector<unsigned int> >& lhDelTree,
-            vector<vector<unsigned int> >& facSplitTree) const;
+            vector<vector<size_t> >& lhDelTree,
+            vector<vector<unsigned char> >& facSplitTree) const;
   
 private:
 

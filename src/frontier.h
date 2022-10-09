@@ -14,12 +14,16 @@
 
  */
 
-#ifndef PARTITION_FRONTIER_H
-#define PARTITION_FRONTIER_H
+#ifndef FRONTIER_FRONTIER_H
+#define FRONTIER_FRONTIER_H
 
+#include "samplemap.h"
 #include "pretree.h"
+#include "indexset.h"
 #include "typeparam.h"
+#include "stagedcell.h"
 
+#include <algorithm>
 #include <vector>
 
 
@@ -27,43 +31,42 @@
    @brief The index sets associated with nodes at a single subtree level.
  */
 class Frontier {
-  static unsigned int minNode;
   static unsigned int totLevels;
-  vector<IndexSet> indexSet;
+  const class PredictorFrame* frame;
+  const unique_ptr<class SampledObs> sampledObs;
   const IndexT bagCount;
-  unique_ptr<class DefMap> defMap;
-  bool nodeRel; // Whether level uses node-relative indexing:  sticky.
-  bool levelTerminal; // Whether this level must exit.
-  IndexT idxLive; // Total live indices.
-  IndexT liveBase; // Accumulates live index offset.
-  IndexT extinctBase; // Accumulates extinct index offset.
-  IndexT succLive; // Accumulates live indices for upcoming level.
-  IndexT succExtinct; // " " extinct "
-  vector<IndexT> relBase; // Node-to-relative index.
-  vector<IndexT> succBase; // Overlaps, then moves to relBase.
-  vector<IndexT> rel2ST; // Node-relative mapping to subtree index.
-  vector<IndexT> rel2PT; // Node-relative mapping to pretree index.
-  vector<IndexT> st2Split; // Subtree-relative mapping to split index.
-  vector<IndexT> st2PT; // Subtree-relative mapping to pretree index.
-  unique_ptr<class Replay> replay;
+  const PredictorT nCtg;
+
+  vector<IndexSet> frontierNodes;
+  unique_ptr<class InterLevel> interLevel;
+
   unique_ptr<PreTree> pretree; // Augmented per frontier.
   
+  SampleMap smTerminal; // Persistent terminal sample mapping:  crescent.
+  SampleMap smNonterm; // Current nonterminal mapping.
+
+  unique_ptr<class SplitFrontier> splitFrontier; // Per-level.
+
+  /**
+     @brief Determines splitability of frontier nodes just split.
+
+     @param indexSet holds the index-set representation of the nodes.
+   */
+  SampleMap surveySplits();
+
+  void registerSplit(IndexSet& iSet,
+		    SampleMap& smNext);
   
+  void registerTerminal(IndexSet& iSet);
+  void registerNonterminal(IndexSet& iSet,
+			   SampleMap& smNext);
+
+
   /**
      @brief Applies splitting results to new level.
-
-     @param argMax are the per-node splitting candidates.
-
-     @param levelTerminal_ indicates whether new level marked as final.
   */
-  vector<IndexSet> splitDispatch(class SplitFrontier* splitFrontier,
-                                 unsigned int level);
+  SampleMap splitDispatch();
 
-  /**
-     @brief Establishes splitting parameters for next frontier level.
-   */
-  void nextLevel(const struct SplitSurvey& survey);
-  
 
   /**
      @brief Resets parameters for upcoming levl.
@@ -74,24 +77,14 @@ class Frontier {
 
 
   /**
-     @brief Reindexes by level modes: node-relative, subtree-relative, mixed.
+     @brief Marks frontier nodes as unsplitable for graceful termination.
 
-     Parameters as above.
+     @param level is the zero-based tree depth.
    */
-  void reindex(const struct SplitSurvey& survey);
+  void earlyExit(unsigned int level);
 
-  
-  /**
-     @brief Produces new level's index sets and dispatches extinct nodes to pretree frontier.
+public:
 
-     Parameters as described above.
-
-     @return next level's splitable index set.
-  */
-  vector<IndexSet> produce(IndexT splitNext);
-
-
- public:
 
   /**
      @brief Initializes static invariants.
@@ -100,8 +93,7 @@ class Frontier {
 
      @param totLevels_ is the maximum number of levels to evaluate.
   */
-  static void immutables(unsigned int minNode_,
-                         unsigned int totLevels_);
+  static void immutables(unsigned int totLevels);
 
 
   /**
@@ -113,24 +105,23 @@ class Frontier {
   /**
      @brief Per-tree constructor.  Sets up root node for level zero.
   */
-  Frontier(const class SummaryFrame* frame,
-           const class Sample* sample);
+  Frontier(const class PredictorFrame* frame,
+	   const class Sampler* sampler,
+	   unsigned int tIdx);
 
-  ~Frontier();
-
+  
   /**
     @brief Trains one tree.
 
-    @param summaryFrame contains the predictor type mappings.
+    @param predictor contains the predictor type mappings.
 
     @param sample contains the bagging summary.
 
     @return trained pretree object.
   */
-  static unique_ptr<class PreTree>
-  oneTree(const class Train* train,
-	  const class SummaryFrame* frame,
-	  const class Sample* sample);
+  static unique_ptr<class PreTree> oneTree(const class PredictorFrame* frame,
+					   const class Sampler* sampler,
+					   unsigned int tIdx);
 
 
   /**
@@ -139,95 +130,67 @@ class Frontier {
      Assumes root node and attendant per-tree data structures have been initialized.
      Parameters as described above.
   */
-  unique_ptr<class PreTree> levels(const class Sample* sample,
-                                   class SplitFrontier* splitFrontier);
+  unique_ptr<class PreTree> levels();
+
+
+  /**
+     @brief Produces frontier nodes for next level.
+   */
+  vector<IndexSet> produce() const;
+
+  
+  /**
+     @brief Updates both index set and pretree states for a set of simple splits.
+   */
+  void updateSimple(const vector<class SplitNux>& nuxMax,
+		    class BranchSense& branchSense);
+
+
+  /**
+     @brief Updates only pretree states for a set of compound splits.
+   */
+  void updateCompound(const vector<vector<class SplitNux>>& nuxMax);
+
+
+  void setScore(IndexT splitIdx) const;
+
+  
+  /**
+     @return end position of nonterminal map.
+   */
+  IndexT getNonterminalEnd() const;
   
 
+  const vector<IndexSet>& getNodes() const {
+    return frontierNodes;
+  }
+  
+
+  const IndexSet& getNode(IndexT splitIdx) const {
+    return frontierNodes[splitIdx];
+  }
+
+  
   /**
-     @brief Counts offspring of this node, assumed not to be a leaf.
-
-     @return count of offspring nodes.
-  */
-  unsigned int splitCensus(const IndexSet& iSet,
-                           struct SplitSurvey& survey);
-
-
-  /**
-     @brief Accumulates index parameters of successor level.
-
-     @param succExent is the index of extent of the putative successor set.
-
-     @param[out] idxMax outputs the maximum successor index.
-
-     @return count of splitable sets precipitated in next level:  0 or 1.
-  */
-  unsigned int splitAccum(IndexT succExtent,
-                          struct SplitSurvey& survey);
-
-
-
-  /**
-     @brief Builds index base offsets to mirror crescent pretree level.
-
-     @param extent is the count of the index range.
-
-     @param ptId is the index of the corresponding pretree node.
-
-     @param offOut outputs the node-relative starting index.  Should not
-     exceed 'idxExtent', the live high watermark of the previous level.
-
-     @param terminal is true iff predecessor node is terminal.
-
-     @return successor index count.
-  */
-  IndexT idxSucc(IndexT extent,
-                       IndexT ptId,
-                       IndexT &outOff,
-                       bool terminal = false);
-
+     @return pre-tree index associated with node.
+   */
+  IndexT getPTId(const StagedCell* mrra) const {
+    return frontierNodes[mrra->getNodeIdx()].getPTId();
+  }
+  
 
   /**
      @brief PreTree pass-through to obtain successor index.
 
      @param ptId is the parent pretree index.
 
-     @param isLeft indicates the successor handedness.
+     @param senseTrue is true iff true branch sense requested.
 
-     @return successor index.
+     @return successor pre-tree index.
    */
   IndexT getPTIdSucc(IndexT ptId,
-                     bool isLeft) const;
-  
+                     bool senseTrue) const;
 
-  /**
-     @brief DefMap pass-through to register reaching path.
-
-     @param splitIdx is the level-relative node index.
-
-     @param parIdx is the parent node's index.
-
-     @param bufRange is the subsumed buffer range.
-
-     @param relBase is the index base.
-
-     @param path is the inherited path.
-   */
-  void reachingPath(IndexT splitIdx,
-                    IndexT parIdx,
-                    const IndexRange& bufRange,
-                    IndexT relBase,
-                    unsigned int path) const;
-  
-  /**
-     @brief Drives node-relative re-indexing.
-   */
-  void nodeReindex();
-
-  /**
-     @brief Subtree-relative reindexing:  indices randomly distributed
-     among nodes (i.e., index sets).
-  */
-  void stReindex(IndexT splitNext);
 
   /**
      @brief Updates the split/path/pretree state of an extant index based on
@@ -235,40 +198,12 @@ class Frontier {
 
      @param stPath is a subtree-relative path.
   */
-  void stReindex(class IdxPath *stPath,
+  void stReindex(const class BranchSense& branchSense,
                  IndexT splitNext,
                  IndexT chunkStart,
                  IndexT chunkNext);
 
-  /**
-     @brief As above, but initializes node-relative mappings for subsequent
-     levels.  Employs accumulated state and cannot be parallelized.
-  */
-  void transitionReindex(IndexT splitNext);
 
-  /**
-     @brief Updates the mapping from live relative indices to associated
-     PreTree indices.
-
-     @return corresponding subtree-relative index.
-  */
-  IndexT relLive(IndexT relIdx,
-                       IndexT targIdx,
-                       IndexT path,
-                       IndexT base,
-                       IndexT ptIdx);
-  /**
-     @brief Translates node-relative back to subtree-relative indices on 
-     terminatinal node.
-
-     @param relIdx is the node-relative index.
-
-     @param ptId is the pre-tree index of the associated node.
-  */
-  void relExtinct(IndexT relIdx,
-                  IndexT ptId);
-
-  
   /**
      @brief Visits all live indices, so likely worth parallelizing.
 
@@ -278,30 +213,34 @@ class Frontier {
   */
   vector<double> sumsAndSquares(vector<vector<double> >& ctgSum);
 
+  
   /**
-     @brief Getter for IndexRange at a given coordinate.
+     @brief Passes through to IndexSet method.
 
-     @param preCand contains the splitting candidate's coordinate.
+     @param splitIdx could also be looked up from candV, if nonempty.
 
-     @return index range of referenced split coordinate.
+     @param candV contains splitting candidates associated with split index.
+
+     @return maximal- or zero-information candidate for split.
    */
-  IndexRange getBufRange(const DefCoord& preCand) const;
+  class SplitNux candMax(IndexT splitIdx,
+			 const vector<class SplitNux>& candV) const;
 
-  /**
-    @brief Invoked from the RHS or LHS of a split to determine whether the node persists to the next level.
-    
-    MUST guarantee that no zero-length "splits" have been introduced.
-    Not only are these nonsensical, but they are also dangerous, as they violate
-    various assumptions about the integrity of the intermediate respresentation.
 
-    @param extent is the count of indices subsumed by the node.
+  IndexRange getNodeRange(IndexT nodeIdx) const {
+    return frontierNodes[nodeIdx].getBufRange();
+  }
+  
 
-    @return true iff the node subsumes more than minimal count of buffer elements.
-  */
-  inline bool isSplitable(IndexT extent) const {
-    return !levelTerminal && extent >= minNode;
+  auto getInterLevel() const {
+    return interLevel.get();
   }
 
+
+  auto getFrame() const {
+    return frame;
+  }
+  
 
   /**
      @brief Getter for # of distinct in-bag samples.
@@ -314,11 +253,20 @@ class Frontier {
 
 
   /**
+     @brief Getter for # categories in response.
+   */
+  inline auto getNCtg() const {
+    return nCtg;
+  }
+
+  
+  /**
      @brief Accessor for count of splitable sets.
    */
   inline IndexT getNSplit() const {
-    return indexSet.size();
+    return frontierNodes.size();
   }
+
 
   /**
      @brief Accessor for sum of sampled responses over set.
@@ -328,7 +276,15 @@ class Frontier {
      @return index set's sum value.
    */
   inline auto getSum(IndexT splitIdx) const {
-    return indexSet[splitIdx].getSum();
+    return frontierNodes[splitIdx].getSum();
+  }
+
+
+  /**
+     @brief As above, but parametrized by candidate location.
+   */
+  inline auto getSum(const StagedCell* mrra) const {
+    return getSum(mrra->getNodeIdx());
   }
 
 
@@ -336,7 +292,42 @@ class Frontier {
      @brief Accessor for count of sampled responses over set.
    */
   inline auto getSCount(IndexT splitIdx) const {
-    return indexSet[splitIdx].getSCount();
+    return frontierNodes[splitIdx].getSCount();
+  }
+
+
+  inline auto getSCount(const StagedCell* mrra) const {
+    return getSCount(mrra->getNodeIdx());
+  }
+
+
+  /**
+     @brief Accessor for count of sampled responses over set.
+   */
+  inline auto getSCountSucc(IndexT splitIdx,
+			    bool sense) const {
+    return frontierNodes[splitIdx].getSCountSucc(sense);
+  }
+
+
+  inline auto getSCountSucc(const StagedCell* mrra,
+			    bool sense) const {
+    return getSCountSucc(mrra->getNodeIdx(), sense);
+  }
+
+
+  /**
+     @brief Accessor for count of sampled responses over set.
+   */
+  inline auto getSumSucc(IndexT splitIdx,
+			    bool sense) const {
+    return frontierNodes[splitIdx].getSumSucc(sense);
+  }
+
+
+  inline auto getSumSucc(const StagedCell* mrra,
+			    bool sense) const {
+    return getSumSucc(mrra->getNodeIdx(), sense);
   }
 
 
@@ -344,15 +335,15 @@ class Frontier {
      @brief Accessor for count of disinct indices over set.
    */
   inline auto getExtent(IndexT splitIdx) const {
-    return indexSet[splitIdx].getExtent();
+    return frontierNodes[splitIdx].getExtent();
   }
-  
+
 
   /**
-     @brief Accessor for relative base of split.
+     @return node starting index in upcoming level.
    */
-  inline auto getRelBase(IndexT splitIdx) const {
-    return relBase[splitIdx];
+  IndexT idxStartUpcoming(const IndexSet& iSet) const {
+    return smNonterm.range[iSet.getSplitIdx()].getStart();
   }
 
   
@@ -360,7 +351,7 @@ class Frontier {
      @brief Indicates whether index set is inherently unsplitable.
    */
   inline bool isUnsplitable(IndexT splitIdx) const {
-    return indexSet[splitIdx].isUnsplitable();
+    return frontierNodes[splitIdx].isUnsplitable();
   }
 
   
@@ -368,25 +359,7 @@ class Frontier {
      @brief Dispatches consecutive node-relative indices to frontier map for
      final pre-tree node assignment.
   */
-  void relExtinct(IndexT relBase,
-                  IndexT extent,
-                  IndexT ptId) {
-    for (IndexT relIdx = relBase; relIdx < relBase + extent; relIdx++) {
-      relExtinct(relIdx, ptId);
-    }
-  }
-
-
-  /**
-     @brief Reconciles remaining live node-relative indices.
-  */
-  void relFlush() {
-    if (nodeRel) {
-      for (IndexT relIdx = 0; relIdx < idxLive; relIdx++) {
-        relExtinct(relIdx, rel2PT[relIdx]);
-      }
-    }
-  }
+  void relExtinct(const IndexSet& iSet);
 };
 
 #endif

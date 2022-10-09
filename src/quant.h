@@ -14,11 +14,12 @@
 
  */
 
-#ifndef RF_QUANT_H
-#define RF_QUANT_H
+#ifndef FOREST_QUANT_H
+#define FOREST_QUANT_H
 
 #include "typeparam.h"
 #include "valrank.h"
+#include "leaf.h" // RankCount definition only.
 
 #include <vector>
 
@@ -28,17 +29,20 @@
 */
 class Quant {
   static const unsigned int binSize; // # slots to track.
-  const class LeafFrameReg *leafReg; // Summary of trained terminal nodes.
-  const class BitMatrix* baggedRows; // In-bag summary.
-  ValRank<double> valRank;
-  const vector<struct RankCount> rankCount; // forest-wide, by sample.
   const vector<double> quantile; // quantile values over which to predict.
   const unsigned int qCount; // caches quantile size for quick reference.
+  const class Sampler* sampler;
+  const struct Leaf* leaf;
+  const bool empty; // if so, leave vectors empty and bail.
+  const vector<vector<IndexRange>> leafDom;
+  const RankedObs<double> valRank;
+  const vector<vector<vector<RankCount>>> rankCount; // forest-wide, by sample.
+  const unsigned int rankScale; // log2 of scaling factor.
+  const vector<double> binMean;
   vector<double> qPred; // predicted quantiles.
   vector<double> qEst; // quantile of response estimates.
-  unsigned int rankScale; // log2 of scaling factor.
-  const vector<double> binMean;
 
+  
   /**
      @brief Computes a bin offset for a given rank.
 
@@ -60,7 +64,7 @@ class Quant {
 
 
   /**
-     @brief Bins response means.
+n     @brief Bins response means.
 
      @param valRank contains the ranked response/row pairs.
 
@@ -68,24 +72,9 @@ class Quant {
 
      @return binned vector of response means.
    */
-  vector<double> binMeans(const ValRank<double>& valRank,
-                          unsigned int rankScale);
+  vector<double> binMeans(const RankedObs<double>& valRank) const;
 
   
-  /**
-     @brief Writes the quantile values for a given row.
-
-     @param rowBlock is the block-relative row index.
-
-     @param[out] qRow[] outputs the 'qCount' quantile values.
-  */
-  void predictRow(const class PredictFrame* frame,
-                  unsigned int rowBlock,
-                  double yPred,
-                  double qRow[],
-                  double* qEst);
-
-
   /**
      @brief Writes quantile values for a row of predictions.
 
@@ -97,10 +86,12 @@ class Quant {
 
      @param[out] qRow[] outputs the derived quantiles.
    */
-  IndexT quantSamples(const vector<PredictorT>& sCount,
-                      const vector<double> threshold,
-                      double yPred,
-                      double qRow[]) const;
+  void quantSamples(const class PredictReg* predictReg,
+		    const vector<IndexT>& sCount,
+		    const vector<double>& threshold,
+		    IndexT totSample,
+		    size_t row);
+  
 
   /**
      @brief Accumulates the ranks assocated with predicted leaf.
@@ -113,20 +104,33 @@ class Quant {
 
      @return count of samples subsumed by leaf.
   */
-  IndexT leafSample(unsigned int tIdx,
-                    IndexT leafIdx,
-                    vector<unsigned int> &sampRanks) const;
+  IndexT sampleLeaf(unsigned int tIdx,
+		    IndexT leafIdx,
+		    vector<IndexT>& scountBin) const;
 
 
- public:
+public:
   /**
      @brief Constructor for invocation from within core.
 
      Parameters mirror simililarly-named members.
    */
-  Quant(const class LeafFrameReg* leaf,
-        const class Bag* bag,
+  Quant(const class Forest* forest,
+	const struct Leaf* leaf,
+	const class Predict* predict,
+	const class ResponseReg* response,
         const vector<double>& quantile_);
+
+  ~Quant() = default;
+  
+
+  /**
+     @brief Determines whether to bail on quantile estimation.
+   */
+  inline bool isEmpty() const {
+    return empty;
+  };
+
 
   /**
      @brief Getter for number of quantiles.
@@ -138,14 +142,6 @@ class Quant {
   }
 
 
-  /**
-     @brief Getter for number of rows predicted.
-
-     Returns zero if empty bag precludes valRank from initialization.
-   */
-  unsigned int getNRow() const;
-
-  
   /**
      @brief Accessor for predicted quantiles.
 
@@ -167,15 +163,12 @@ class Quant {
   
   
   /**
-     @brief Fills in the quantile leaves for each row within a contiguous block.
+     @brief Writes the quantile values for a given row.
 
-     @param rowStart is the first row at which to predict.
-
-     @param extent is the number of rows to predict.
+     @param row is the row over which to build prediction quantiles.
   */
-  void predictAcross(const class PredictFrame* frame,
-                     size_t rowStart,
-                     size_t extent);
+  void predictRow(const class PredictReg* predictReg,
+		  size_t row);
 };
 
 #endif

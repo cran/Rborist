@@ -1,3 +1,4 @@
+
 // This file is part of ArboristCore.
 
 /* This Source Code Form is subject to the terms of the Mozilla Public
@@ -6,119 +7,135 @@
  */
 
 /**
-   @file leafBridge.cc
+   @file leafbridge.cc
 
    @brief Front-end wrapper for core-level Leaf objects.
 
    @author Mark Seligman
  */
 
-#include "leaf.h"
+
 #include "leafbridge.h"
-#include "bagbridge.h"
+#include "leaf.h"
+#include "samplerbridge.h"
+#include "sampler.h"
 
-// For now, cloned implementations:
-size_t LeafBridge::getRowPredict() const {
-  return getLeaf()->getRowPredict();
+#include <memory>
+using namespace std;
+
+
+unique_ptr<LeafBridge> LeafBridge::FactoryTrain(const SamplerBridge* sb,
+						bool thin) {
+  return make_unique<LeafBridge>(sb, thin);
 }
 
 
-LeafRegBridge::LeafRegBridge(const unsigned int* height,
-                             unsigned int nTree,
-                             const unsigned char* node,
-                             const unsigned int* bagHeight,
-                             const unsigned char* bagSample,
-                             const double* yTrain,
-                             size_t rowTrain,
-                             double trainMean,
-                             size_t rowPredict) :
-  leaf(make_unique<LeafFrameReg>(height, nTree, (const Leaf*) node, bagHeight, (const BagSample*) bagSample, yTrain, rowTrain, trainMean, rowPredict)) {
+LeafBridge::LeafBridge(const SamplerBridge* sb,
+		       bool thin) :
+  leaf(Leaf::train(sb->getNObs(), thin)) {
 }
 
 
-LeafRegBridge::~LeafRegBridge() {
+unique_ptr<LeafBridge> LeafBridge::FactoryPredict(const SamplerBridge* samplerBridge,
+						  bool thin,
+						  const double extent_[],
+						  const double index_[]) {
+  vector<vector<size_t>> extent = unpackExtent(samplerBridge, thin, extent_);
+  vector<vector<vector<size_t>>> index = unpackIndex(samplerBridge, thin, extent, index_);
+  return make_unique<LeafBridge>(samplerBridge, thin, std::move(extent), std::move(index));
 }
 
 
-LeafFrame* LeafRegBridge::getLeaf() const {
+LeafBridge::LeafBridge(const SamplerBridge* samplerBridge,
+		       bool thin,
+		       vector<vector<size_t>> extent,
+		       vector<vector<vector<size_t>>> index) :
+  leaf(Leaf::predict(samplerBridge->getSampler(),
+		     thin,
+		     std::move(extent),
+		     std::move(index))) {
+}
+
+
+LeafBridge::~LeafBridge() {
+}
+
+
+vector<vector<size_t>> LeafBridge::unpackExtent(const SamplerBridge* samplerBridge,
+						bool thin,
+						const double extentNum[]) {
+  Sampler* sampler = samplerBridge->getSampler();
+  unsigned int nTree = sampler->getNTree();
+  if (thin) {
+    return vector<vector<size_t>>(0);
+  }
+
+  vector<vector<size_t>> unpacked(nTree);
+  size_t idx = 0;
+  for (unsigned int tIdx = 0; tIdx < nTree; tIdx++) {
+    size_t extentTree = 0;
+    while (extentTree < sampler->getBagCount(tIdx)) {
+      size_t extentLeaf = extentNum[idx++];
+      unpacked[tIdx].push_back(extentLeaf);
+      extentTree += extentLeaf;
+    }
+  }
+  return unpacked;
+}
+
+
+vector<vector<vector<size_t>>> LeafBridge::unpackIndex(const SamplerBridge* samplerBridge,
+						       bool thin,
+						       const vector<vector<size_t>>& extent,
+						       const double numVal[]) {
+  const Sampler* sampler = samplerBridge->getSampler();
+  unsigned int nTree = sampler->getNTree();
+  if (thin)
+    return vector<vector<vector<size_t>>>(0);
+
+  vector<vector<vector<size_t>>> unpacked(nTree);
+
+  size_t idx = 0;
+  for (unsigned int tIdx = 0; tIdx < nTree; tIdx++) {
+    unpacked[tIdx] = vector<vector<size_t>>(extent[tIdx].size());
+    for (size_t leafIdx = 0; leafIdx < unpacked[tIdx].size(); leafIdx++) {
+      vector<size_t> unpackedLeaf(extent[tIdx][leafIdx]);
+      for (size_t slot = 0; slot < unpackedLeaf.size(); slot++) {
+	unpackedLeaf[slot] = numVal[idx];
+	idx++;
+      }
+      unpacked[tIdx][leafIdx] = unpackedLeaf;
+    }
+  }
+  return unpacked;
+}
+
+Leaf* LeafBridge::getLeaf() const {
   return leaf.get();
 }
 
 
-const vector<double>& LeafRegBridge::getYPred() const {
-  return leaf->getYPred();
+size_t LeafBridge::getExtentSize() const {
+  return leaf->getExtentCresc().size();
 }
 
 
-void LeafRegBridge::dump(const BagBridge* bagBridge,
-                         vector<vector<size_t> >& rowTree,
-                         vector<vector<unsigned int> >& sCountTree,
-                         vector<vector<double> >& scoreTree,
-                         vector<vector<unsigned int> >& extentTree) const {
-  leaf->dump(bagBridge->getBag(), rowTree, sCountTree, scoreTree, extentTree);
+size_t LeafBridge::getIndexSize() const {
+  return leaf->getIndexCresc().size();
 }
 
 
-void LeafCtgBridge::dump(const BagBridge* bagBridge,
-                         vector<vector<size_t> > &rowTree,
-                         vector<vector<unsigned int> > &sCountTree,
-                         vector<vector<double> > &scoreTree,
-                         vector<vector<unsigned int> > &extentTree,
-                         vector<vector<double> > &probTree) const {
-  leaf->dump(bagBridge->getBag(), rowTree, sCountTree, scoreTree, extentTree, probTree);
+void LeafBridge::dumpExtent(double extentOut[]) const {
+  auto extent = leaf->getExtentCresc();
+  for (size_t i = 0; i < extent.size(); i++) {
+    extentOut[i] = extent[i];
+  }
 }
 
 
-LeafCtgBridge::LeafCtgBridge(const unsigned int* height,
-                             unsigned int nTree,
-                             const unsigned char* node,
-                             const unsigned int* bagHeight,
-                             const unsigned char* bagSample,
-                             const double* weight,
-                             unsigned int ctgTrain,
-                             size_t rowPredict,
-                             bool doProb) :
-  leaf(make_unique<LeafFrameCtg>(height, nTree, (const Leaf*) node, bagHeight, (const BagSample*) bagSample, weight, ctgTrain, rowPredict, doProb)) {
-}
-
-
-LeafCtgBridge::~LeafCtgBridge() {
-}
-
-
-
-LeafFrame* LeafCtgBridge::getLeaf() const {
-  return leaf.get();
-}
-
-
-void LeafCtgBridge::vote() {
-  leaf->vote();
-}
-
-const unsigned int* LeafCtgBridge::getCensus() const {
-  return leaf->getCensus();
-}
-
-const vector<double>& LeafCtgBridge::getProb() const {
-  return leaf->getProb();
-}
-
-const vector<unsigned int>& LeafCtgBridge::getYPred() const {
-  return leaf->getYPred();
-}
-
-
-unsigned int LeafCtgBridge::getYPred(size_t row) const {
-  return leaf->getYPred(row);
-}
-
-
-unsigned int LeafCtgBridge::getCtgTrain() const {
-  return leaf->getCtgTrain();
-}
-
-unsigned int LeafCtgBridge::ctgIdx(unsigned int ctgTest,
-                    unsigned int ctgPred) const {
-  return leaf->ctgIdx(ctgTest, ctgPred);
+void LeafBridge::dumpIndex(double indexOut[]) const {
+  auto index = leaf->getIndexCresc();
+  for (size_t i = 0; i < index.size(); i++) {
+    indexOut[i] = index[i];
+  }
 }

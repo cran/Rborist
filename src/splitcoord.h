@@ -13,8 +13,8 @@
    @author Mark Seligman
  */
 
-#ifndef CORE_SPLITCOORD_H
-#define CORE_SPLITCOORD_H
+#ifndef SPLIT_SPLITCOORD_H
+#define SPLIT_SPLITCOORD_H
 
 #include "typeparam.h"
 
@@ -22,6 +22,8 @@
    @brief Split/predictor coordinate pair.
  */
 
+// Blunt assignment of inattainable predictor index.
+static constexpr PredictorT noPred = PredictorT(~0ull);
 
 struct SplitCoord {
   IndexT nodeIdx;
@@ -35,9 +37,15 @@ struct SplitCoord {
 
   SplitCoord() :
   nodeIdx(0),
-    predIdx(0) {
+    predIdx(noPred) {
   }
 
+  /**
+     @brief Indicates whether coord has been initialized to an actual predictor.
+   */
+  inline bool noCoord() const {
+    return predIdx == noPred;
+  }
   
   /**
      @brief Computes node-major offset using passed stride value.
@@ -45,44 +53,5 @@ struct SplitCoord {
   inline size_t strideOffset(unsigned int stride) const {
     return nodeIdx * stride + predIdx;
   }
-
-  
-  /**
-     @brief Scales node index to account for multi-level binary splitting.
-
-     @param del is a specified number of back levels.
-
-     @return node index scaled by level difference.
-   */
-  inline size_t backScale(unsigned int del) const {
-    return nodeIdx << del;
-  }
 };
-
-
-/**
-   @brief Includes the index of the buffer containing the cell's definition.
- */
-struct DefCoord {
-  SplitCoord splitCoord;
-  unsigned char bufIdx; // Double-buffer containing definition.
-  unsigned char del; // Delta between current level and level of definition.
-  
-  DefCoord(const SplitCoord& splitCoord_,
-	   unsigned int bufIdx_,
-	   unsigned int del_ = 0) :
-  splitCoord(splitCoord_),
-    bufIdx(bufIdx_),
-    del(del_) {
-  }
-
-  
-  /**
-     @return index of complementary buffer.
-   */
-  unsigned int compBuffer() const {
-    return 1 - bufIdx;
-  }
-};
-
 #endif

@@ -8,353 +8,144 @@
 /**
    @file sample.h
 
-   @brief Class definitions for sample-oriented aspects of training.
+   @brief Sampling functions.
 
+   Reworks and enhances Nathan Russell's 2016 implementation for Rcpp.
    @author Mark Seligman
  */
 
 #ifndef CORE_SAMPLE_H
 #define CORE_SAMPLE_H
 
-#include "sumcount.h"
-#include "typeparam.h"
+#include "prng.h"
+#include "bheap.h"
 
 #include <vector>
+#include <numeric>
 
-#include "samplenux.h" // For now.
+using namespace std;
 
+namespace Sample {
 
-/**
- @brief Run of instances of a given row obtained from sampling for an individual tree.
-*/
-class Sample {
-  // Experimental coarse-grained control of locality:  Not quite
-  // coding-to-cache, but almost.
-  static constexpr unsigned int locExp = 18;  // Log of locality threshold.
+  template<typename indexType>
+  struct Walker {
+    vector<double> weight;
+    vector<indexType> coIndex;
 
-  /**
-     @brief Maps an index into its bin.
+    Walker(const double prob[],
+	   indexType nObs) :
+      weight(vector<double>(nObs)),
+      coIndex(vector<indexType>(nObs)) {
 
-     @param idx is the index in question.
+      // Rescaling by 'nObs' enables conditional probability to be taken
+      // when weighing slot.  Also appears to diminish rounding error.
+      for (indexType i = 0; i < nObs; i++)
+	weight[i] = prob[i] * nObs;
 
-     @return bin index.
-   */
-  static constexpr unsigned int binIdx(unsigned int idx) {
-    return idx >> locExp;
-  }
+      vector<indexType> overMean, underMean;
+      for (indexType i = 0; i < nObs; i++) {
+	if (weight[i] < 1.0)
+	  underMean.push_back(i);
+	else
+	  overMean.push_back(i);
+      }
 
-  
- protected:
-  const class SummaryFrame* frame; // Summary of ranked predictors.
-  
-  static unsigned int nSamp; // Number of row samples requested.
-  vector<SampleNux> sampleNode; // Per-sample summary of values.
-  vector<SumCount> ctgRoot; // Root census of categorical response.
-  vector<unsigned int> row2Sample; // Maps row index to sample index.
-  unsigned int bagCount; // Number of distinct bagged (sampled) rows.
-  double bagSum; // Sum of bagged responses.
+      for (indexType i = 0; i < nObs; i++) {
+	// Rounding error may cause indices to be missed:
+	// TODO:  randomize the scragglers.
+	if (overMean.empty() || i == underMean.size())
+	  break;
+	indexType overIdx = overMean.back();
+	indexType underIdx = underMean[i];
+	coIndex[underIdx] = overIdx; // 'overIdx' may be reused.
+	weight[overIdx] += (weight[underIdx] - 1.0);
+	if (weight[overIdx] < 1.0) {
+	  underMean.push_back(overIdx);
+	  overMean.pop_back();
+	}
+      }
+    }
 
+    
+    vector<size_t> sample(size_t nSamp) {
+      vector<size_t> idxOut(nSamp);
 
-  /**
-     @brief Samples and counts occurrences of each sampled row
-     index.
-
-     @param[out] sCountRow outputs the number of times a given row is
-     sampled.
-
-     @return count of bagged rows.
-  */
-  static unsigned int rowSample(vector<unsigned int> &sCountRow);
-
-  
-  /**
-     @brief Bins a vector of indices for coarse locality.  Equivalent to
-     the first pass of a radix sort.
-
-     @param idx is an unordered vector of indices.
-
-     @return binned version of index vector passed.
-   */
-  static vector<unsigned int> binIndices(const vector<unsigned int>& idx);
-
-
-  /**
-     @brief Tabulates a collection of indices by occurrence.
-
-     @param idx is the vector of indices to be tabulated.
-
-     @param sampleCount tabulates the occurrence count of each index.
-
-     @return count of distinctly-sampled elements.
-   */
-  static unsigned int countSamples(vector<unsigned int>& idx,
-                                   vector<unsigned int>& sampleCount);
-
-  
-  /**
-     @brief Samples rows and counts resulting occurrences.
-
-     @param y is the proxy / response:  classification / summary.
-
-     @param yCtg is true response / zero:  classification / regression.
-
-     @param[out] treeBag records the bagged rows as high bits.
-  */
-  void bagSamples(const double y[],
-                const unsigned int yCtg[],
-                class BV *treeBag);
-
-  /**
-     @brief Appends summary node to crescent vector.
-
-     @param val is the sum of sampled responses.
-
-     @param sCount is the number of times sampled.
-
-     @param ctg is the category index:  unused if not categorical.
-   */
-  virtual double addNode(double val, unsigned int sCount, unsigned int ctg) = 0;
-
- public:
-
-  /**
-     @brief Static entry for discrete response (classification).
-
-     @param y is a real-valued proxy for the training response.
-
-     @param frame summarizes the ranked observations.
-
-     @param yCtg is the training response.
-
-     @param[out] treeBag outputs bit-encoded indicator of sampled rows.
-
-     @return new SampleCtg instance.
-   */
-  static unique_ptr<class SampleCtg> factoryCtg(const double y[],
-                                                const class SummaryFrame *frame,
-                                                const unsigned int yCtg[],
-                                                class BV *treeBag);
-
-  /**
-     @brief Static entry for continuous response (regression).
-
-     @param y is the training response.
-
-     @param frame summarizes the ranked observations.
-
-     @param[out] treeBag outputs bit-encoded indicator of sampled rows.
-
-     @return new SampleReg instance.
-   */
-  static unique_ptr<class SampleReg>factoryReg(const double y[],
-                                               const class SummaryFrame *frame,
-                                               class BV *treeBag);
+      // Some implementions piggybacks index lookup with random weight
+      // generation.  Separate random variates are drawn here to
+      // improve resolution at high observation count.
+      vector<size_t> rIndex = PRNG::rUnifIndex(nSamp, weight.size());
+      vector<double> ru = PRNG::rUnif(nSamp);
+      for (size_t i = 0; i < nSamp; i++) {
+	size_t idx = rIndex[i];
+	idxOut[i] = ru[i] < weight[idx] ? idx : coIndex[idx];
+      }
+      return idxOut;
+    }
+  };
   
 
   /**
-     @brief Lights off static initializations needed for sampling.
+   @brief Uniform sampling without replacement.
 
-     @param nSamp_ is the number of samples.
-  */
-  static void immutables(unsigned int nSamp_);
+   @param sampleCoeff are the top nSamp-many scaling coefficients.
 
+   Type currently fixed to size_t ut satisfy rUnifIndex().
+   
+   @param nObs is the sequence size from which to sample.
 
-  /**
-     @brief Resets statics.
-  */
-  static void deImmutables();
-
-
-  /**
-     @brief Constructor.
-
-     @param frame summarizes predictor ranks by row.
-   */
-  Sample(const class SummaryFrame* frame);
-
-
-  virtual ~Sample();
-
-
-  /**
-     @brief Accessor for fully-sampled observation set.
-
-     @return array of joined sample/predictor records.
-  */
-  unique_ptr<class ObsPart> predictors() const;
-  
-
-  /**
-     @brief Invokes RankedFrame staging methods and caches compression map.
-
-     @param samplePred summarizes the observations.
-  */
-  vector<struct StageCount> stage(class ObsPart* samplePred) const;
-
-
-  /**
-     @brief Getter for root category census vector.
-   */
-  inline const vector<SumCount> getCtgRoot() const {
-    return ctgRoot;
-  }
-
-  
-  /**
-     @brief Getter for user-specified sample count.
-   */
-  static inline unsigned int getNSamp() {
-    return nSamp;
+   @return vector of sampled indices.
+ */
+  template<typename indexType>
+  vector<indexType> sampleUniform(const vector<size_t>& sampleScale,
+				  indexType nObs) {
+    vector<size_t> rn = PRNG::rUnifIndex(sampleScale);
+    indexType nSamp = sampleScale.size();
+    vector<indexType> idxSeq(nObs);
+    vector<indexType> idxOut(nSamp);
+    iota(idxSeq.begin(), idxSeq.end(), 0);
+    for (indexType i = 0; i < nSamp; i++) {
+      indexType index = rn[i];
+      idxOut[i] = exchange(idxSeq[index], idxSeq[nObs - 1 - i]);
+    }
+    return idxOut;
   }
 
 
   /**
-     @brief Getter for bag count:  # uniquely-sampled rows.
+     @brief Permutes a zero-based set of contiguous values.
+
+     @param nSlot is the number of values.
+
+     @return vector of permuted indices.
    */
-  inline unsigned int getBagCount() const {
-    return bagCount;
+  template<typename indexType>
+  vector<indexType> permute(indexType nSlot) {
+    vector<double> vUnif = PRNG::rUnif(nSlot);
+    BHeap<indexType> bHeap;
+    for (auto variate : vUnif) {
+      bHeap.insert(variate);
+    }
+
+    return bHeap.depopulate();
   }
 
-
   /**
-     @brief Getter for sum of bagged responses.
+     @brief Non-replacement sampling via Efraimidis-Spirakis.
+
+     'nSamp' value cannot exceed 'nObs', and may be much smaller.
    */
-  inline double  getBagSum() const {
-    return bagSum;
-  }
+  template<typename indexType>
+  vector<indexType> sampleEfraimidis(const vector<double>& prob,
+				     indexType nSamp = 0) {
+    indexType nObs = prob.size();
+    vector<double> vUnif = PRNG::rUnif(nObs);
+    BHeap<indexType> bHeap;
+    for (indexType slot = 0; slot < nObs; slot++) {
+      bHeap.insert(-log(vUnif[slot]) / prob[slot]);
+    }
 
-  
-  /**
-     @brief Determines whether a given row is sampled.
-
-     @param row is the row number in question.
-
-     @param[out] sIdx is the (possibly default) sample index for row.
-
-     @return true iff row is sampled.
-   */
-  inline bool sampledRow(unsigned int row, unsigned int &sIdx) const {
-    sIdx = row2Sample[row];
-    return sIdx < bagCount;
-  }
-
-
-  /**
-     @brief Accumulates 'sum' field into various containers.
-
-     @param sIdx is the sample index.
-
-     @param[in, out] bulkSum accumulates sums irrespective of category.
-
-     @param[in, out] ctgSum accumulates sums by category.
-   */
-  inline void accum(unsigned int sIdx,
-                    double &bulkSum,
-                    double *ctgSum) const {
-    unsigned int ctg;
-    FltVal sum = sampleNode[sIdx].refCtg(ctg);
-    bulkSum += sum;
-    ctgSum[ctg] += sum;
-  }
-
-
-  /**
-     @brief Getter for sample count.
-
-     @param sIdx is the sample index.
-   */
-  inline unsigned int getSCount(unsigned int sIdx) const {
-    return sampleNode[sIdx].getSCount();
-  }
-
-
-  /**
-     @brief Getter for the sampled response sum.
-
-     @param sIdx is the sample index.
-   */
-  inline FltVal getSum(int sIdx) const {
-    return sampleNode[sIdx].getSum();
+    return bHeap.depopulate(nSamp == 0 ? nObs : nSamp);
   }
 };
-
-
-/**
-   @brief Regression-specific methods and members.
-*/
-class SampleReg : public Sample {
-
- public:
-  SampleReg(const class SummaryFrame* frame);
-  ~SampleReg();
-
-
-  /**
-     @brief Appends regression-style sampling record.
-
-     Parameters as described at virtual declaration.
-
-     @param ctg unused, as response is not categorical.
-   */
-  inline double addNode(double yVal,
-                        unsigned int sCount,
-                        unsigned int ctg) {
-    sampleNode.emplace_back(yVal, sCount);
-    return sampleNode.back().getSum();
-  }
-  
-
-  /**
-     @brief Inverts the randomly-sampled vector of rows.
-
-     @param y is the response vector.
-
-     @param[out] treeBag encodes the bagged rows for the tree.
-  */
-  void bagSamples(const double y[], class BV *treeBag);
-};
-
-
-/**
- @brief Classification-specific sampling.
-*/
-class SampleCtg : public Sample {
-
- public:
-  
-  SampleCtg(const class SummaryFrame* frame);
-  ~SampleCtg();
-
-  
-  /**
-     @brief Appends a sample summary record.
-
-     Parameters as described in virtual declaration.
-
-     @return sum of sampled response values.
-   */
-  inline double addNode(double yVal, unsigned int sCount, unsigned int ctg) {
-    sampleNode.emplace_back(yVal, sCount, ctg);
-    double ySum = sampleNode.back().getSum();
-    ctgRoot[ctg] += SumCount(ySum, sCount);
-
-    return ySum;
-  }
-  
-  
-  /**
-     @brief Samples the response, sets in-bag bits.
-
-     @param yCtg is the response vector.
-
-     @param y is the proxy response vector.
-
-     @param[out] treeBag records the bagged rows.
-  */
-  void bagSamples(const unsigned int yCtg[],
-                const double y[],
-                class BV *treeBag);
-};
-
 
 #endif

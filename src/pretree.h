@@ -8,134 +8,124 @@
 /**
    @file pretree.h
 
-   @brief Class defintions for the pre-tree, a serial and minimal representation from which the decision tree is built.
+   @brief Builds a single decision tree and dispatches to crescent forest.
 
    @author Mark Seligman
 
  */
 
-#ifndef TREE_PRETREE_H
-#define TREE_PRETREE_H
+#ifndef FOREST_PRETREE_H
+#define FOREST_PRETREE_H
 
-#include "decnode.h"
 #include "bv.h"
-#include "ptnode.h"
-#include "crit.h"
-#include "indexset.h"
+#include "typeparam.h"
+#include "forest.h"
+#include "decnode.h"
+#include "samplemap.h"
 
 #include <vector>
 
 
 /**
-   @brief Workspace for merging PTNodes:  copies 'info' and records
-   offsets and merge state.
- */
-/**
-   @brief Serialized representation of the pre-tree, suitable for tranfer between devices such as coprocessors, disks and nodes.
+   @brief Serialized representation of the pre-tree, suitable for tranfer between devices such as coprocessors, disks and compute nodes.
 */
-
 class PreTree {
-  static IndexT heightEst;
   static IndexT leafMax; // User option:  maximum # leaves, if > 0.
-  const unsigned int bagCount;
-  IndexT height;
-  IndexT leafCount;
-  size_t bitEnd; // Next free slot in factor bit vector.
-  vector<PTNode<DecNode>> nodeVec; // Vector of tree nodes.
-  vector<struct Crit> crit;
-  class BV *splitBits;
-  vector<unsigned int> termST;
+  IndexT leafCount; // Running count of leaves.
+  vector<DecNode> nodeVec; // Vector of tree nodes.
+  vector<double> scores;
+  vector<double> infoLocal; //< Per-predictor split information.
+  vector<double> infoNode; ///< Per-node " ".  Leaf merging onlye.
+  BV splitBits; // Bit encoding of factor splits.
+  BV observedBits; // Bit encoding of factor values.
+  size_t bitEnd; // Next free slot in either bit vector.
+  SampleMap terminalMap;
 
   /**
-     @brief Constructs mapping from sample indices to leaf indices.
+     @brief Enumerates leaves.
 
-     @param[in, out] forest accumulates the growing forest.
-
-     @return rewritten map.
-  */
-  const vector<IndexT> frontierConsume(ForestCresc<DecNode> *forest) const;
-
-  /**
-     @return BV-aligned length of used portion of split vector.
-  */
-  size_t getBitWidth();
-
-
-  /**
-     @brief Accounts for the addition of two terminals to the tree.
-
-     @return void, with incremented height and leaf count.
-  */
-  inline void terminalOffspring() {
-  // Two more leaves for offspring, one fewer for this.
-    height += 2;
-    leafCount++;
-  }
-
+     Leaf ordering is currently irrelevant, from the perspective of
+     prediction, as support for premature exit is not required.  Post-
+     training adjustments to the tree, however, require the ability to
+     reconstruct sample maps at arbitrary locations.  For this reason, a
+     depth-first ordering is applied.
+   */
+  void setLeafIndices();
 
  public:
   /**
    */
-  PreTree(PredictorT cardExtent,
+  PreTree(const class PredictorFrame* frame,
 	  IndexT bagCount_);
-
-
-  /**
-  */
-  ~PreTree();
 
 
   /**
    @brief Caches the row count and computes an initial estimate of node count.
 
-   @param _nSamp is the number of samples.
-
-   @param _minH is the minimal splitable index node size.
-
    @param leafMax is a user-specified limit on the number of leaves.
  */
-  static void immutables(IndexT nSamp, IndexT minH, IndexT leafMax_);
+  static void init(IndexT leafMax_);
 
 
-  static void deImmutables();
-
-
-  /**
-     @brief Refines the height estimate using the actual height of a
-     constructed PreTree.
-
-     @param height is an actual height value.
-  */
-  static void reserve(IndexT height);
-
-
-  /**
-     @brief Dispatches nonterminal method according to split type.
-   */
-  void nonterminal(double info,
-                   class IndexSet* iSet);
+  static void deInit();
 
   
   /**
+     @brief Verifies that frontier samples all map to leaf nodes.
+
+     @return count of non-leaf nodes encountered.
+   */
+  IndexT checkFrontier(const vector<IndexT>& stMap) const;
+
+
+  /**
+     @brief Consumes a collection of compound criteria.
+   */
+  void consumeCompound(const class SplitFrontier* sf,
+		       const vector<vector<SplitNux>>& nuxMax);
+
+  
+  /**
+     @brief Consumes each criterion in a collection.
+
+     @param critVec collects splits defining criteria.
+
+     @param compound is true iff collection is compound.
+   */
+  void consumeCriteria(const class SplitFrontier* sf,
+		       const vector<class SplitNux>& critVec);
+
+
+  /**
+     @brief Dispatches nonterminal and offspring.
+
+     @param preallocate indicates whether criteria block has been preallocated.
+   */
+  void addCriterion(const class SplitFrontier* sf,
+		    const class SplitNux& nux,
+		    bool preallocated = false);
+
+
+  /**
      @brief Appends criterion for bit-based branch.
 
-     @param predIdx is the criterion predictor.
+     @param nux summarizes the criterion bits.
 
      @param cardinality is the predictor's cardinality.
+
+     @param bitsTrue are the bit positions taking the true branch.
   */
-  void critBits(const class IndexSet* iSet,
-                PredictorT predIdx,
-                PredictorT cardinality);
+  void critBits(const class SplitFrontier* sf,
+		const class SplitNux& nux);
 
   
   /**
      @brief Appends criterion for cut-based branch.
      
-     @param rankRange bounds the cut-defining ranks.
+     @param nux summarizes the the cut.
   */
-  void critCut(const class IndexSet* iSet,
-               PredictorT predIdx,
-	       double quantRank);
+  void critCut(const class SplitFrontier* sf,
+	       const class SplitNux& nux);
 
   
   /**
@@ -143,78 +133,98 @@ class PreTree {
 
      @param forest grows by producing nodes and splits consumed from pre-tree.
 
-     @param tIdx is the index of the tree being consumed/produced.
-
-     @param predInfo accumulates the information contribution of each predictor.
+     @param predInfo accumulates the local information contribution.
 
      @return leaf map from consumed frontier.
   */
-  const vector<unsigned int> consume(ForestCresc<DecNode> *forest,
-                                     unsigned int tIdx,
-                                     vector<double> &predInfo);
+  void consume(class Train* train,
+	       Forest *forest,
+	       struct Leaf* leaf) const;
 
-  
+
+  void setScore(const class SplitFrontier* sf,
+		const class IndexSet& iSet);
+
+
   /**
-     @brief Consumes nonterminal information into the dual-use vectors needed by the decision tree.
+     @brief Assigns scores to all nodes in the map.
+   */
+  void scoreNodes(const class Sampler* sampler,
+		  const struct SampleMap& map);
 
-     Leaf information is post-assigned by the response-dependent Sample methods.
 
-     @param[in, out]  forest inputs/outputs the updated forest.
-
-     @param[out] predInfo outputs the predictor-specific information values.
-  */
-  void consumeNonterminal(ForestCresc<DecNode> *forest,
-                          vector<double> &predInfo);
-
-  
   /**
-     @brief Sets specified bit in (left) splitting bit vector.
+     @brief Caches terminal map, merges, numbers leaves.
 
-     @param iSet is the index node for which the LH bit is set.
-
-     @param pos is the bit position beyond to set.
-  */
-  void setLeft(const class IndexSet* iSet,
-               IndexT pos);
-
-
-  IndexT leafMerge();
-
+     @param smTerminal is the terminal map produce by Frontier.
+   */
+  void setTerminals(SampleMap smTerminal);
   
+
   /**
-     @brief Absorbs the terminal list and merges, if requested.
-
-     Side-effects the frontier map.
-
-     @param stTerm are subtree-relative indices.  These must be mapped to
-     sample indices if the subtree is proper.
-  */
-  void finish(const vector<IndexT>& stTerm);
-
+     @brief Combines leaves exceeding a specified maximum count.
+   */
+  void leafMerge();
   
-  inline IndexT getLHId(IndexT ptId) const {
-    return nodeVec[ptId].getLHId(ptId);
+
+  inline IndexT getHeight() const {
+    return nodeVec.size();
+  }
+  
+
+  inline void resetTerminal(IndexT ptId) {
+    nodeVec[ptId].resetTerminal();
   }
 
   
-  inline IndexT getRHId(IndexT ptId) const {
-    return nodeVec[ptId].getRHId(ptId);
+  inline IndexT getIdTrue(IndexT ptId) const {
+    return nodeVec[ptId].getIdTrue(ptId);
   }
 
-
-  inline IndexT getSuccId(IndexT ptId, bool isLeft) const {
-    return isLeft ? nodeVec[ptId].getLHId(ptId) : nodeVec[ptId].getRHId(ptId);
-  }
   
+  inline IndexT getIdFalse(IndexT ptId) const {
+    return nodeVec[ptId].getIdFalse(ptId);
+  }
+
+
+  inline IndexT getSuccId(IndexT ptId, bool senseTrue) const {
+    return senseTrue ? nodeVec[ptId].getIdTrue(ptId) : nodeVec[ptId].getIdFalse(ptId);
+  }
+
+
+  /**
+     @brief Obtains true and false branch target indices.
+   */
+  inline void getSuccTF(IndexT ptId,
+                        IndexT& ptLeft,
+                        IndexT& ptRight) const {
+    ptLeft = nodeVec[ptId].getIdTrue(ptId);
+    ptRight = nodeVec[ptId].getIdFalse(ptId);
+  }
+
+
   /**
      @return true iff node is nonterminal.
    */
-  inline bool isNonTerminal(IndexT ptId) const {
-    return nodeVec[ptId].isNonTerminal();
+  inline bool isNonterminal(IndexT ptId) const {
+    return nodeVec[ptId].isNonterminal();
   }
 
 
-    /**
+  inline IndexT getDelIdx(IndexT ptId) const {
+    return nodeVec[ptId].getDelIdx();
+  }
+
+
+  /**
+     @brief Obtains leaf index of node assumed to be nonterminal.
+   */
+  inline IndexT getLeafIdx(IndexT ptIdx) const {
+    return nodeVec[ptIdx].getLeafIdx();
+  }
+
+
+  /**
        @brief Determines whether a nonterminal can be merged with its
        children.
 
@@ -223,47 +233,53 @@ class PreTree {
        @return true iff node has two leaf children.
     */
   inline bool isMergeable(IndexT ptId) const {
-    return !isNonTerminal(getLHId(ptId)) && !isNonTerminal(getRHId(ptId));
-  }  
+    return !isNonterminal(getIdTrue(ptId)) && !isNonterminal(getIdFalse(ptId));
+  }
 
+
+  DecNode& getNode(IndexT ptId) {
+    return nodeVec[ptId];
+  }
   
+
   /**
-     @brief Fills in references to values known to be useful for building
-     a block of PreTree objects.
-   */
-  void blockBump(IndexT& _height,
-		 IndexT& _maxHeight,
-		 size_t& _bitWidth,
-		 IndexT& _leafCount,
-		 IndexT& _bagCount);
+     @brief Accounts for a block of new criteria or singleton root node.
+
+     Pre-existing terminal node converted to nonterminal for leading criterion.
+
+     @param nCrit is the number of criteria in the block; zero iff block preallocated.
+  */
+  inline void offspring(IndexT nCrit, bool root = false) {
+    if (nCrit > 0 || root) {
+      DecNode node;
+      nodeVec.insert(nodeVec.end(), nCrit + 1, node);
+      scores.insert(scores.end(), nCrit + 1, 0.0);
+      infoNode.insert(infoNode.end(), nCrit + 1, 0.0);
+      leafCount++; // Two new terminals, minus one for conversion of lead criterion.
+    }
+  }
 };
 
 
-template<typename nodeType>
+/**
+   @brief Augments a decision node with values to facilitate merging.
+ */
 struct PTMerge {
-  FltVal info;
-  IndexT ptId;
-  IndexT idMerged;
-  IndexT root;
-  IndexT parId;
-  IndexT idSib; // Sibling id, if not root else zero.
-  bool descLH; // Whether this is left descendant of some node.
-
-  static vector<PTMerge<nodeType>> merge(const PreTree* preTree,
-				  IndexT height,
-				  IndexT leafDiff);
-
+  FltVal infoDom; ///< sum of dominated info values.
+  IndexT ptId; ///< node id.
 };
 
 
 /**
    @brief Information-base comparator for queue ordering.
+
+   Nodes order is increasing with sum, guaranteeing that offspring are chosen
+   before parents.
 */
-template<typename nodeType>
 class InfoCompare {
 public:
-  bool operator() (const PTMerge<nodeType>& a, const PTMerge<nodeType>& b) {
-    return a.info > b.info;
+  bool operator() (const PTMerge& a, const PTMerge& b) {
+    return a.infoDom > b.infoDom;
   }
 };
 

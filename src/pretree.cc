@@ -12,284 +12,271 @@
 
    @author Mark Seligman
  */
-#include "bv.h"
-#include "pretree.h"
-#include "crit.h"
+#include "train.h"
+#include "predictorframe.h"
 #include "indexset.h"
+#include "leaf.h"
+#include "samplemap.h"
+#include "bv.h"
+#include "splitfrontier.h"
+#include "pretree.h"
 
-#include "callback.h"
 #include <queue>
 #include <vector>
-#include <algorithm>
 
-
-IndexT PreTree::heightEst = 0;
 IndexT PreTree::leafMax = 0;
 
 
-const vector<IndexT> PreTree::frontierConsume(ForestCresc<DecNode> *forest) const {
-    vector<IndexT> frontierMap(termST.size());
-    vector<IndexT> pt2Leaf(height);
-    fill(pt2Leaf.begin(), pt2Leaf.end(), height); // Inattainable leaf index.
-
-    IndexT leafIdx = 0;
-    IndexT stIdx = 0;
-    for (auto ptIdx : termST) {
-      if (pt2Leaf[ptIdx] == height) {
-	forest->terminal(ptIdx, leafIdx);
-	pt2Leaf[ptIdx] = leafIdx++;
-      }
-      frontierMap[stIdx++] = pt2Leaf[ptIdx];
-    }
-
-    return frontierMap;
-  }
-
-
-  /**
-     @return BV-aligned length of used portion of split vector.
-  */
-
-size_t PreTree::getBitWidth(){
-    return BV::slotAlign(bitEnd);
-  }
-
-
-PreTree::PreTree(PredictorT cardExtent,
-	  IndexT bagCount_) :
-    bagCount(bagCount_),
-    height(1),
-    leafCount(1),
-    bitEnd(0),
-    nodeVec(vector<PTNode<DecNode>>(2*bagCount - 1)), // Maximum possible nodes
-    splitBits(new BV(heightEst * cardExtent)) { // Initial estimate.
+PreTree::PreTree(const PredictorFrame* frame,
+		 IndexT bagCount) :
+  leafCount(0),
+  infoLocal(vector<double>(frame->getNPred())),
+  splitBits(BV(bagCount * frame->getFactorExtent())), // Vague estimate.
+  observedBits(BV(bagCount * frame->getFactorExtent())),
+  bitEnd(0) {
+  offspring(0, true);
 }
 
 
-PreTree::~PreTree() {
-  delete splitBits;
+void PreTree::init(IndexT leafMax_) {
+  leafMax = leafMax_;
 }
 
 
-void PreTree::immutables(IndexT nSamp, IndexT minH, IndexT leafMax_) {
-  // Static initial estimate of pre-tree heights employs a minimal enclosing
-  // balanced tree.  This is probably naive, given that decision trees
-  // are not generally balanced.
-  //
-  // In any case, 'heightEst' is re-estimated following construction of the
-  // first PreTree block.  Hence the value is not really immutable.  Nodes
-  // can also be reallocated during the interlevel pass as needed.
-  //
-    IndexT twoL = 1; // 2^level, beginning from level zero (root).
-    while (twoL * minH < nSamp) {
-      twoL <<= 1;
-    }
 
-    // Terminals plus accumulated nonterminals.
-    heightEst = (twoL << 2); // - 1, for exact count.
+void PreTree::deInit() {
+  leafMax = 0;
+}
 
-    leafMax = leafMax_;
+
+void PreTree::consumeCompound(const SplitFrontier* sf,
+			      const vector<vector<SplitNux>>& nuxMax) {
+  // True branches target box exterior.
+  // False branches target next criterion or box terminal.
+  for (auto & nuxCrit : nuxMax) {
+    consumeCriteria(sf, nuxCrit);
+  }
+}
+
+
+void PreTree::consumeCriteria(const SplitFrontier* sf,
+			      const vector<SplitNux>& nuxCrit) {
+  offspring(nuxCrit.size()); // Preallocates terminals and compound nonterminals.
+  for (auto nux : nuxCrit) {
+    addCriterion(sf, nux, true);
+  }
+}
+
+
+void PreTree::addCriterion(const SplitFrontier* sf,
+			   const SplitNux& nux,
+			   bool preallocated) {
+  if (nux.noNux())
+    return;
+
+  if (sf->isFactor(nux)) {
+    critBits(sf, nux);
+  }
+  else {
+    critCut(sf, nux);
   }
 
+  offspring(preallocated ? 0 : 1);
+  DecNode& node = getNode(nux.getPTId());
+  node.setInvert(nux.invertTest());
+  node.setDelIdx(getHeight() - 2 - nux.getPTId());
+  infoNode[nux.getPTId()] = nux.getInfo();
+  infoLocal[node.getPredIdx()] += nux.getInfo();
+}
 
 
-void PreTree::deImmutables() {
-    leafMax = heightEst = 0;
-  }
+void PreTree::critBits(const SplitFrontier* sf,
+		       const SplitNux& nux) {
+  auto bitPos = bitEnd;
+  splitBits.resize(bitEnd);
+  observedBits.resize(bitEnd);
+  bitEnd += sf->critBitCount(nux);
+  sf->setTrueBits(nux, &splitBits, bitPos);
+  sf->setObservedBits(nux, &observedBits, bitPos);
+  getNode(nux.getPTId()).critBits(nux, bitPos);
+}
 
 
-  /**
-     @brief Refines the height estimate using the actual height of a
-     constructed PreTree.
-
-     @param height is an actual height value.
-  */
-void PreTree::reserve(IndexT height) {
-    while (heightEst <= height) // Assigns next power-of-two above 'height'.
-      heightEst <<= 1;
-  }
-
-  /**
-     @brief Dispatches nonterminal method according to split type.
-   */
-void PreTree::nonterminal(double info,
-                   class IndexSet* iSet) {
-    nodeVec[iSet->getPTId()].nonterminal(info, height - iSet->getPTId(), crit.size());
-    terminalOffspring();
-  }
+void PreTree::critCut(const SplitFrontier* sf,
+		      const SplitNux& nux) {
+  getNode(nux.getPTId()).critCut(nux, sf);
+}
 
 
+void PreTree::setScore(const SplitFrontier* splitFrontier,
+		       const IndexSet& iSet) {
+  scores[iSet.getPTId()] = splitFrontier->getScore(iSet);
+}
 
+
+void PreTree::consume(Train* train,
+		      Forest* forest,
+		      Leaf* leaf) const {
+  train->consumeInfo(infoLocal);
   
-  /**
-     @brief Appends criterion for bit-based branch.
+  forest->consumeTree(nodeVec, scores);
+  forest->consumeBits(splitBits, observedBits, bitEnd);
 
-     @param predIdx is the criterion predictor.
-
-     @param cardinality is the predictor's cardinality.
-  */
-void PreTree::critBits(const class IndexSet* iSet,
-                PredictorT predIdx,
-                PredictorT cardinality) {
-    nodeVec[iSet->getPTId()].bumpCriterion();
-    crit.emplace_back(predIdx, bitEnd);
-    bitEnd += cardinality;
-    splitBits = splitBits->Resize(bitEnd);
-  }
-
-
-
-  /**
-     @brief Appends criterion for cut-based branch.
-     
-     @param rankRange bounds the cut-defining ranks.
-  */
-void PreTree::critCut(const class IndexSet* iSet,
-               PredictorT predIdx,
-	       double quantRank) {
-    nodeVec[iSet->getPTId()].bumpCriterion();
-    crit.emplace_back(predIdx, quantRank);
-  }
-
-
-const vector<IndexT> PreTree::consume(ForestCresc<DecNode> *forest,
-                                     unsigned int tIdx,
-                                     vector<double> &predInfo) {
-    forest->treeInit(tIdx, height);
-    consumeNonterminal(forest, predInfo);
-    forest->appendBits(splitBits, bitEnd, tIdx);
-
-    return frontierConsume(forest);
-  }
-
-
-void PreTree::consumeNonterminal(ForestCresc<DecNode> *forest,
-                          vector<double> &predInfo)  {
-    fill(predInfo.begin(), predInfo.end(), 0.0);
-    for (IndexT idx = 0; idx < height; idx++) {
-      nodeVec[idx].consumeNonterminal(forest, predInfo, idx, crit);
-    }
-  }
-
-void PreTree::setLeft(const class IndexSet* iSet,
-               IndexT pos) {
-      splitBits->setBit(pos + nodeVec[iSet->getPTId()].getBitOffset(crit));
-  }
-
-
-IndexT PreTree::leafMerge() {
-    if (leafMax == 0 || leafCount <= leafMax) {
-      return height;
-    }
-
-    vector<PTMerge<DecNode>> ptMerge = PTMerge<DecNode>::merge(this, height, leafCount - leafMax);
-
-  // Pushes down roots.  Roots remain in node list, but descendants
-  // merged away.
-  //
-    IndexT heightMerged = 0;
-    for (IndexT ptId = 0; ptId < height; ptId++) {
-      IndexT root = ptMerge[ptId].root;
-      if (root != height && isNonTerminal(ptId)) {
-	ptMerge[getLHId(ptId)].root = ptMerge[getRHId(ptId)].root = root;
-      }
-      if (root == height || root == ptId) { // Unmerged or root:  retained.
-	nodeVec[ptId].setTerminal(); // Will reset if encountered as parent.
-	if (ptMerge[ptId].descLH) {
-	  IndexT parId = ptMerge[ptId].parId;
-	  nodeVec[parId].setNonterminal(heightMerged - ptMerge[parId].idMerged);
-	}
-	ptMerge[ptId].idMerged = heightMerged++;
-      }
-    }
-    
-  // Packs nodeVec[] with retained nodes.
-  //
-    for (IndexT ptId = 0; ptId < height; ptId++) {
-      IndexT idMerged = ptMerge[ptId].idMerged;
-      if (idMerged != height) {
-	nodeVec[idMerged] = nodeVec[ptId];
-      }
-    }
-
-  // Remaps frontier to merged terminals.
-  //
-    for (auto & ptId : termST) {
-      IndexT root = ptMerge[ptId].root;
-      ptId = ptMerge[(root == height) ? ptId : root].idMerged;
-    }
-
-    return heightMerged;
-  }
-
-  
-  /**
-     @brief Absorbs the terminal list and merges, if requested.
-
-     Side-effects the frontier map.
-
-     @param stTerm are subtree-relative indices.  These must be mapped to
-     sample indices if the subtree is proper.
-  */
-void PreTree::finish(const vector<IndexT>& stTerm) {
-    for (auto & stIdx : stTerm) {
-      termST.push_back(stIdx);
-    }
-
-    height = leafMerge();
-  }
-
-
-void PreTree::blockBump(IndexT& _height,
-                        IndexT& _maxHeight,
-                        size_t& _bitWidth,
-                        IndexT& _leafCount,
-                        IndexT& _bagCount) {
-    _height += height;
-    _maxHeight = max(height, _maxHeight);
-    _bitWidth += getBitWidth();
-    _leafCount += leafCount;
-    _bagCount += bagCount;
+  leaf->consumeTerminals(this, terminalMap);
 }
 
 
-template<typename nodeType>
-vector<PTMerge<nodeType>> PTMerge<nodeType>::merge(const PreTree* preTree,
-					 IndexT height,
-					 IndexT leafDiff) {
-    vector<PTMerge<nodeType>> ptMerge(height);
-    priority_queue<PTMerge<nodeType>, vector<PTMerge<nodeType>>, InfoCompare<nodeType>> infoQueue;
+void PreTree::setTerminals(SampleMap smTerminal) {
+  terminalMap = std::move(smTerminal);
 
-  auto leafProb = CallBack::rUnif(height);
-  ptMerge[0].parId = 0;
-  IndexT ptId = 0;
-  for (auto & merge : ptMerge) {
-    merge.info = leafProb[ptId];
-    merge.ptId = ptId;
-    merge.idMerged = height;
-    merge.root = height; // Merged away iff != height.
-    merge.descLH = ptId != 0 && preTree->getLHId(merge.parId) == ptId;
-    merge.idSib = ptId == 0 ? 0 : (merge.descLH ? preTree->getRHId(merge.parId) : preTree->getLHId(merge.parId));
-    if (preTree->isNonTerminal(ptId)) {
-      ptMerge[preTree->getLHId(ptId)].parId = ptMerge[preTree->getRHId(ptId)].parId = ptId;
-      if (preTree->isMergeable(ptId)) {
-        infoQueue.push(merge);
-      }
-    }
-    ptId++;
+  leafMerge();
+  setLeafIndices();
+}
+
+
+void PreTree::setLeafIndices() {
+  vector<IndexRange> dom = Forest::leafDominators(nodeVec);
+  for (auto ptIdx : terminalMap.ptIdx) {
+    nodeVec[ptIdx].setLeaf(dom[ptIdx].getStart());
+  }
+}
+
+
+void PreTree::leafMerge() {
+  if (leafMax == 0 || leafCount <= leafMax) {
+    return;
   }
 
-  // Merges and pops mergeable nodes and pushes newly mergeable parents.
-  //
-  while (leafDiff-- > 0) {
-    IndexT ptTop = infoQueue.top().ptId;
+  IndexT excessLeaves = leafCount - leafMax;
+  IndexT height = getHeight();
+
+  // Assigns parent indices and initializes information.
+  vector<IndexT> ptParent(height);
+  vector<PTMerge> mergeNode(height);
+  for (IndexT ptId = 0; ptId < height; ptId++) {
+    mergeNode[ptId].ptId = ptId;
+    mergeNode[ptId].infoDom = infoNode[ptId];
+    if (isNonterminal(ptId)) {
+      IndexT kidLeft = ptId + getDelIdx(ptId);
+      ptParent[kidLeft] = ptId;
+      ptParent[kidLeft + 1] = ptId;
+    }
+  }
+
+  // Accumulates sum of dominated info values.
+  for (IndexT ptId = height - 1; ptId > 0; ptId--) {
+    IndexT idParent = ptParent[ptId];
+    mergeNode[idParent].infoDom += mergeNode[ptId].infoDom;
+  }
+
+  // Heap orders nonterminals by 'infoDom' value.
+  priority_queue<PTMerge, vector<PTMerge>, InfoCompare> infoQueue;
+  for (IndexT ptId = 0; ptId < height; ptId++) {
+    if (isNonterminal(ptId)) {
+      ////cout << "Inserting " << mergeNode[ptId].ptId << endl;
+      infoQueue.emplace(mergeNode[ptId]);
+    }
+  }
+  //cout << infoQueue.size() << " nonterminals in queue + " << leafCount << " leaves out of " << height << endl;
+  
+  vector<IndexT> ptMerged(height);
+  iota(ptMerged.begin(), ptMerged.end(), 0);
+
+  // Pops nonterminals in increasing 'infoDom' order.
+  // 'infoDom' value is monotone increasing ascending a subtree, so
+  // offspring always popped before dominator.
+
+  BV mergedTerminal(height);
+  IndexT nMerged = 0;
+  while (!infoQueue.empty() && nMerged < excessLeaves) {
+    PTMerge ntMerged = infoQueue.top();
     infoQueue.pop();
-    ptMerge[ptTop].root = ptTop;
-    IndexT parId = ptMerge[ptTop].parId;
-    IndexT idSib = ptMerge[ptTop].idSib;
-    if ((!preTree->isNonTerminal(idSib) || ptMerge[idSib].root != height)) {
-      infoQueue.push(ptMerge[parId]);
+    IndexT idMerged = ntMerged.ptId;
+    mergedTerminal.setBit(idMerged);
+
+    // Both offspring should be either leaf or merged.
+    IndexT idKid = idMerged + getDelIdx(idMerged);
+    ptMerged[idKid] = idMerged;
+    ptMerged[idKid+1] = idMerged;
+    nMerged++;
+  }
+
+  // Copies unmerged nodes into new node vector.
+  vector<DecNode> nvFinal;
+  vector<double> scoresFinal;
+  vector<IndexT> old2New(height);
+  fill(old2New.begin(), old2New.end(), height); // Inattainable index.
+  for (IndexT ptId = 0; ptId < height; ptId++) {
+    if (ptMerged[ptId] == ptId) { // Not merged away.
+      old2New[ptId] = nvFinal.size();
+      nvFinal.emplace_back(nodeVec[ptId]);
+      scoresFinal.emplace_back(scores[ptId]);
     }
   }
-  return ptMerge;
+
+  // Resets delIdx to reflect new indices.
+  for (IndexT ptId = 0; ptId < height; ptId++) {
+    if (old2New[ptId] == height) // Merged away.
+      continue;
+    IndexT ptIdNew = old2New[ptId];
+    if (mergedTerminal.testBit(ptId)) {
+      nvFinal[ptIdNew].resetTerminal();
+    }
+    else {
+      IndexT kidL = getDelIdx(ptId) + ptId;
+      nvFinal[ptIdNew].resetDelIdx(old2New[kidL] - ptIdNew);
+    }
   }
+
+  // Passes dominating merged node downward.
+  for (IndexT ptId = 0; ptId < height; ptId++) {
+    IndexT targ = ptMerged[ptId];
+    if (targ != ptId)
+      ptMerged[ptId] = ptMerged[targ];
+  }
+
+  // Resets terminal node indices.
+  vector<vector<IndexT>> rangeMerge(nvFinal.size()); // Wasteful.
+  for (IndexT rangeIdx = 0; rangeIdx < terminalMap.range.size(); rangeIdx++) {
+    IndexT ptId = terminalMap.ptIdx[rangeIdx];
+    IndexT termMerged = old2New[ptMerged[ptId]];
+    rangeMerge[termMerged].push_back(rangeIdx);
+  }
+
+  // Rebuilds terminal map using merged ranges.
+  SampleMap tmFinal;
+  for (IndexT ptId = 0; ptId < rangeMerge.size(); ptId++) {
+    if (rangeMerge[ptId].empty())
+      continue;
+    tmFinal.ptIdx.push_back(ptId);
+    IndexT idxStart = tmFinal.sampleIndex.size();
+    for (IndexT rangeIdx : rangeMerge[ptId]) {
+      IndexRange& range = terminalMap.range[rangeIdx];
+      for (IndexT idx = range.getStart(); idx != range.getEnd(); idx++) {
+	IndexT stIdx = terminalMap.sampleIndex[idx];
+	tmFinal.sampleIndex.push_back(stIdx);
+      }
+    }
+    tmFinal.range.emplace_back(idxStart, tmFinal.sampleIndex.size() - idxStart);
+  }
+
+  nodeVec = nvFinal;
+  scores = scoresFinal;
+  terminalMap = tmFinal;
+}
+
+
+IndexT PreTree::checkFrontier(const vector<IndexT>& stMap) const {
+  vector<bool> ptSeen(getHeight());
+  IndexT nonLeaf = 0;
+  for (auto ptIdx : stMap) {
+    if (!ptSeen[ptIdx]) {
+      if (isNonterminal(ptIdx)) {
+	nonLeaf++;
+      }
+      ptSeen[ptIdx] = true;
+    }
+  }
+
+  return nonLeaf;
+}

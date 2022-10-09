@@ -16,44 +16,34 @@
    @author Mark Seligman
  */
 
-#include "splitcoord.h"
+#include "stagedcell.h"
 #include "typeparam.h"
 
 #include <vector>
 
+
+/**
+   @brief Coordinates and node summary for a splitting candidate.
+
+   Summary and coordinate members initialized and not changed.  Information
+   value updated by splitting method.
+ */
 class SplitNux {
   static constexpr double minRatioDefault = 0.0;
   static double minRatio;
-  static vector<double> splitQuant; // Where within CDF to split.
 
-  const SplitCoord splitCoord;
-  const unsigned char bufIdx;
-  const IndexRange idxRange; // Indices into compressed ObsPart buffer.
-  const PredictorT setIdx; // Index into runSet vector for factor split.
-  const double sum; // node sum.
+  const StagedCell* cell; // Copied from PreCand.
+  uint32_t randVal;
+  IndexT sigIdx; // Index into accumulator workspace.
+  double sum; // Initial sum, fixed by index set (node).
+  IndexT sCount; // Initial sample count, fixed by index set.
+  IndexT ptId; // Index into tree:  offset from position given by index set.
 
-  IndexT lhSCount; // # samples in left split:  initialized to node value.
-  double info; // Weighted variance or Gini, currently.
-  IndexT lhImplicit; // # implicit indices in LHS:  initialized to node value at scheduling.
-
-  // Accumulated during splitting:
-  IndexT lhExtent; // total # indices in LHS.  Written on arg-max.
-
-  // Copied to decision node, if arg-max.  Numeric only:
-  //
-  double quantRank;
+  // Set during splitting:
+  double info; // CART employs Weighted variance or Gini.
   
-  /**
-     @brief Decrements information field and reports whether still positive.
-
-     @param splitFrontier determines pre-existing information value to subtract.
-
-     @bool true iff decremented information field positive.
-   */
-  bool infoGain(const class SplitFrontier* splitFrontier);
-
-
- public:  
+public:  
+  static vector<double> splitQuant; // Where within CDF to cut.  MOVE to CutSet.
 /**
    @brief Builds static quantile splitting vector from front-end specification.
 
@@ -70,83 +60,90 @@ class SplitNux {
 
 
   /**
+     @retrun true iff run's range exceeds bounds.
+   */
+  bool isImplicit(const struct RunNux& nux) const;
+
+  /**
+     @return desired cut range.
+   */
+  IndexRange cutRange(const class CutSet* cutSet,
+		      bool leftRange) const;
+  
+
+  /**
+     @brief Computes cut-based left range for numeric splits.
+   */
+  IndexRange cutRangeLeft(const class CutSet* cutSet) const;
+
+
+  /**
+     @brief Computes cut-based right range for numeric splits.
+   */
+  IndexRange cutRangeRight(const class CutSet* cutSet) const;
+
+
+  /**
      @brief Trivial constructor. 'info' value of 0.0 ensures ignoring.
+  */  
+  SplitNux() :
+    cell(nullptr),
+    randVal(0),
+    sigIdx(0),
+    sum(0.0),
+    sCount(0),
+    ptId(0),
+    info(0.0) {
+  }
+
+  
+  /**
+     @brief Copy constructor:  post splitting.
+
+  SplitNux(const SplitNux& nux) :
+    mrra(nux.mrra),
+    randVal(nux.randVal),
+    obsRange(nux.obsRange),
+    sigIdx(nux.sigIdx),
+    sum(nux.sum),
+    sCount(nux.sCount),
+    ptId(nux.ptId),
+    info(nux.info) {
+  }
+
+  SplitNux& operator= (const SplitNux& nux) {
+    mrra = nux.mrra;
+    randVal = nux.randVal;
+    obsRange = nux.obsRange;
+    sigIdx = nux.sigIdx;
+    sum = nux.sum;
+    sCount = nux.sCount;
+    ptId = nux.ptId;
+    info = nux.info;
+
+    return *this;
+  }
   */
-  SplitNux() : splitCoord(SplitCoord(0,0)),
-	       bufIdx(0),
-	       setIdx(0),
-	       sum(0.0),
-	       lhSCount(0),
-	       info(0.0) {
-  }
-
   
   /**
-     @brief Called by SplitCand constructor.
+     @brief Transfer constructor over iteratively-encoded IndexSet.
+
+     Post-splitting.
+
+     @param idx positions nux within a multi-criterion set.
    */
-  SplitNux(SplitCoord splitCoord_,
-	   PredictorT setIdx_,
-	   unsigned char bufIdx_,
-	   double sum,
-	   IndexT sCount,
-	   double info_) :
-  splitCoord(splitCoord_),
-  bufIdx(bufIdx_),
-  setIdx(setIdx_),
-  sum(sum),
-  lhSCount(sCount),
-  info(info_) {
-  }
-
-
-  SplitNux(const DefCoord& preCand,
-	   const class SplitFrontier* splitFrontier,
-	   PredictorT setIdx_,
-	   IndexRange range,
-	   IndexT implicitCount);
-
-  
-  ~SplitNux() {
-  }
+  SplitNux(const SplitNux& parent,
+	   const class SplitFrontier* sf,
+	   bool sense,
+	   IndexT idx = 0);
 
 
   /**
-     @brief Passes through to frame method.
-
-     @return cardinality iff factor-valued predictor else zero.
+     @brief Pre-split constructor.
    */
-  PredictorT getCardinality(const class SummaryFrame*) const;
-
-
-  /**
-     @brief Writes the left-hand characterization of a factor-based
-     split with categorical response.
-
-     @param lhBits is a compressed representation of factor codes for the LHS.
-   */
-  void writeBits(const class SplitFrontier* splitFrontier,
-		 PredictorT lhBits);
-
-
-  /**
-     @brief Writes the left-hand characterization of a factor-based
-     split with numerical or binary response.
-
-     @param cutSlot is the LHS/RHS separator position in the vector of
-     factor codes maintained by the run-set.
-   */
-  void writeSlots(const class SplitFrontier* splitFrontier,
-                  PredictorT cutSlot);
-  
-
-  void writeNum(const class SplitFrontier* sf,
-		const class Accum* accum);
-
-
-  /**
-     @brief Consumes frontier node parameters associated with nonterminal.
-  */
-  void consume(class IndexSet* iSet) const;
+  SplitNux(const StagedCell* cell_,
+	   double randVal_,
+	   const class SplitFrontier* splitFrontier);
 
 
   /**
@@ -162,146 +159,152 @@ class SplitNux {
 
 
   /**
-     @brief Resets trial information value of this greater.
-
-     @param[out] runningMax holds the running maximum value.
-
-     @return true iff value revised.
+     @return minInfo threshold.
    */
-  bool maxInfo(double& runningMax) const {
-    if (info > runningMax) {
-      runningMax = info;
-      return true;
-    }
-    return false;
+  double getMinInfo() const {
+    return minRatio * info;
+  }
+
+
+  /**
+     @brief Running argmax over info members.
+
+     @param[in, out] amn holds the running argmax nux.
+
+  inline void maxInfo(const SplitNux*& amn) const {
+    if (info > amn->info || (info == amn->info && info > 0.0 && randVal > amn->randVal))
+      amn = this;
+  }
+  */  
+
+  inline bool maxInfo(const SplitNux& amn) const {
+    return (info > amn.info) || (info == amn.info && info > 0.0 && randVal > amn.randVal);
+  }
+  
+
+  auto getPTId() const {
+    return ptId;
+  }
+
+
+  IndexT getNMissing() const {
+    return cell->obsMissing;
+  }
+
+  
+  /**
+     @return # observations preceding implicit, if any.
+   */
+  IndexT getPreresidual() const {
+    return cell->preResidual;
+  }
+
+
+  auto getRunCount() const {
+    return cell->getRunCount();
   }
 
 
   auto getPredIdx() const {
-    return splitCoord.predIdx;
+    return cell->getPredIdx();
   }
 
   auto getNodeIdx() const {
-    return splitCoord.nodeIdx;
-  }
-  
-
-  auto getDefCoord() const {
-    return DefCoord(splitCoord, bufIdx);
+    return cell->getNodeIdx();
   }
 
   
-  auto getSplitCoord() const {
-    return splitCoord;
+  auto getStagedCell() const {
+    return cell;
   }
 
+  
   auto getBufIdx() const {
-    return bufIdx;
+    return cell->bufIdx;
   }
   
-  auto getSetIdx() const {
-    return setIdx;
+  auto getSigIdx() const {
+    return sigIdx;
   }
 
-  /**
-     @brief Reference getter for over-writing info member.
-  */
-  double& refInfo() {
-    return info;
-  }
   
   auto getInfo() const {
     return info;
   }
+
   
+  void setInfo(double info) {
+    this->info = info;
+  }
+
+
   /**
-     @return true iff left side has no implicit indices.  Rank-based
-     splits only.
+     @brief Indicates whether this is an empty placeholder.
    */
-  bool leftIsExplicit() const {
-    return lhImplicit == 0;
-  }
-
-  auto getIdxStart() const {
-    return idxRange.getStart();
-  }
-
-  auto getExtent() const {
-    return idxRange.getExtent();
-  }
-
-  auto getIdxEnd() const {
-    return idxRange.getEnd() - 1;
+  inline bool noNux() const {
+    return cell == nullptr || cell->coord.noCoord();
   }
 
 
-  auto getQuantRank() const {
-    return quantRank;
-  }
-  
-
-  auto getSCount() const {
-    return lhSCount;
+  inline IndexRange getRange() const {
+    return cell->getObsRange();
   }
 
   
-  auto getSum() const {
+  inline IndexT getObsStart() const {
+    return cell->getObsRange().getStart();
+  }
+
+  
+  inline IndexT getObsExtent() const {
+    return cell->getObsRange().getExtent();
+  }
+
+
+  /**
+     @return inattainable position beyond observation buffer top.
+   */
+  inline IndexT getObsEnd() const {
+    return cell->getObsRange().getEnd();
+  }
+
+
+  /**
+     @return Count of implicit observations associated with cell.
+  */   
+  IndexT getImplicitCount() const {
+    return cell->obsImplicit;
+  }
+
+
+  inline IndexT getSCount() const {
+    return sCount;
+  }
+  
+
+  inline double getSum() const {
     return sum;
   }
-  
 
-  auto getLHExtent() const {
-    return lhExtent;
-  }
-
-  
-  auto getImplicitCount() const {
-    return lhImplicit;
-  }
-  
   
   /**
-     @return Count of indices corresponding to LHS.
+     @brief Randomizes decision to invert the test at run time.
 
-     Only applies to rank-based splits.
+     A bit somewhat removed from the least-significant position is tested.
+     A bias has been observed in the lowest-order bits for some PRNGs.
+
+     @return true iff test is to be inverted.
    */
-  auto getLHExplicit() const {
-    return lhExtent - lhImplicit;
+  bool invertTest() const {
+    return randVal & 0x80000000;
   }
-
-  /**
-     @return Count of indices corresponding to RHS.  Rank-based splits
-     only.
-   */  
-  auto getRHExplicit() const {
-    return getExtent() - getLHExplicit();
-  }
-
-
-  /**
-     @return Starting index of an explicit branch.  Defaults to left if
-     both branches explicit.  Rank-based splits only.
-   */
-  auto getExplicitBranchStart() const {
-    return lhImplicit == 0 ? idxRange.getStart() : idxRange.getStart() + getLHExplicit();
-  }
-
-
-  /**
-     @return Extent of an explicit branch.  Defaults to left if both
-     branches explicit.  Rank-based splits only.
-   */
-  auto getExplicitBranchExtent() const {
-    return lhImplicit == 0 ? getLHExplicit() : getRHExplicit();
-  }
-
+  
   
   /**
-     @return coordinate range of the explicit sample indices.
+     @brief Looks up splitting quantile for associated predictor.
    */
-  auto getExplicitRange() const {
-    IndexRange range(getExplicitBranchStart(), getExplicitBranchExtent());
-    return range;
+  auto getSplitQuant() const {
+    return splitQuant[getPredIdx()];
   }
 };
 

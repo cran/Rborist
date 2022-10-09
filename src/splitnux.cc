@@ -13,11 +13,10 @@
    @author Mark Seligman
  */
 
-#include "accum.h"
-#include "frontier.h"
+#include "cutset.h"
+#include "runsig.h"
 #include "splitfrontier.h"
 #include "splitnux.h"
-#include "summaryframe.h"
 
 
 double SplitNux::minRatio = minRatioDefault;
@@ -40,62 +39,50 @@ void SplitNux::deImmutables() {
 }
 
 
-SplitNux::SplitNux(const DefCoord& preCand,
-		   const SplitFrontier* splitFrontier,
-		   PredictorT setIdx_,
-		   IndexRange range,
-		   IndexT implicitCount) :
-  splitCoord(preCand.splitCoord),
-  bufIdx(preCand.bufIdx),
-  idxRange(range),
-  setIdx(setIdx_),
-  sum(splitFrontier->getSum(splitCoord)),
-  lhSCount(splitFrontier->getSCount(splitCoord)),
-  info(splitFrontier->getPrebias(splitCoord)),
-  lhImplicit(implicitCount) {
-}
-
-  
-bool SplitNux::infoGain(const SplitFrontier* splitFrontier) {
-  info -= splitFrontier->getPrebias(splitCoord);
-  return info > 0.0;
+SplitNux::SplitNux(const StagedCell* cell_,
+		   double randVal_,
+		   const SplitFrontier* splitFrontier) :
+  cell(cell_),
+  randVal(randVal_),
+  sum(splitFrontier->getSum(cell)),
+  sCount(splitFrontier->getSCount(cell)),
+  ptId(splitFrontier->getPTId(cell)),
+  info(0.0) {
+  sigIdx = splitFrontier->accumulatorIndex(*this);
 }
 
 
-void SplitNux::writeBits(const SplitFrontier* splitFrontier,
-			 PredictorT lhBits) {
-  if (infoGain(splitFrontier)) {
-    lhExtent = splitFrontier->lHBits(setIdx, lhBits, lhSCount);
-  }
+SplitNux::SplitNux(const SplitNux& parent,
+		   const SplitFrontier* sf,
+		   bool sense,
+		   IndexT idx) :
+  cell(parent.cell),
+  randVal(parent.randVal),
+  sigIdx(parent.sigIdx),
+  sum(sf->getSumSucc(cell, sense)),
+  sCount(sf->getSCountSucc(cell, sense)),
+  ptId(parent.ptId + idx),
+  info(0.0) {
 }
 
 
-void SplitNux::writeSlots(const SplitFrontier* splitFrontier,
-                          PredictorT cutSlot) {
-  if (infoGain(splitFrontier)) {
-    lhExtent = splitFrontier->lHSlots(setIdx, cutSlot, lhSCount);
-  }
+bool SplitNux::isImplicit(const RunNux& nux) const {
+  return nux.obsRange.idxStart >= getObsEnd();
 }
 
 
-void SplitNux::writeNum(const SplitFrontier* sf,
-			const Accum* accum) {
-  info = accum->info;
-  if (infoGain(sf)) {
-    IndexRange range = IndexRange(accum->rankLH, accum->rankRH - accum->rankLH);
-    quantRank = range.interpolate(splitQuant[splitCoord.predIdx]);
-    lhSCount = accum->lhSCount;
-    lhImplicit = accum->lhImplicit(this);
-    lhExtent = lhImplicit + (accum->rhMin - idxRange.getStart());
-  }
+
+IndexRange SplitNux::cutRange(const CutSet* cutSet, bool leftRange) const {
+  return leftRange ? cutRangeLeft(cutSet) : cutRangeRight(cutSet);
 }
 
 
-PredictorT SplitNux::getCardinality(const SummaryFrame* frame) const {
-  return frame->getCardinality(splitCoord.predIdx);
+IndexRange SplitNux::cutRangeLeft(const CutSet* cutSet) const {
+  return IndexRange(getObsStart(), cutSet->getIdxLeft(*this) - getObsStart() + 1);
 }
 
 
-void SplitNux::consume(IndexSet* iSet) const {
-  iSet->consumeCriterion(minRatio * info, lhSCount, lhExtent);
+IndexRange SplitNux::cutRangeRight(const CutSet* cutSet) const {
+  IndexT idxRight = cutSet->getIdxRight(*this);
+  return IndexRange(idxRight, getObsExtent() - (idxRight - getObsStart()));
 }

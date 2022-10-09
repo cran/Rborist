@@ -1,4 +1,4 @@
-// This file is part of ArboristCore.
+// This file is part of deframe.
 
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
@@ -13,217 +13,68 @@
    @author Mark Seligman
  */
 
-#ifndef FRAMEMAP_RLEFRAME_H
-#define FRAMEMAP_RLEFRAME_H
+#ifndef DEFRAME_RLEFRAME_H
+#define DEFRAME_RLEFRAME_H
 
-#include "rle.h"
-#include "rowrank.h"
-#include "valrank.h"
-
-#include <vector>
-using namespace std;
+#include "rlecresc.h"
 
 /**
-  @brief Sparse representation imposed by front-end.
+   @brief Sorts on row, for reorder.
 */
 template<typename valType>
-struct RLEVal {
-  valType val;
-  unsigned int row;
-  unsigned int runLength;
-
-  RLEVal(valType val_,
-         unsigned int row_,
-         unsigned int runLength_) : val(val_),
-                                    row(row_),
-                                    runLength(runLength_) {
-  }
-};
-
-
-/**
-   @brief Sorts on value, then rows, for stability.
-
-   N.B:  extraneous parentheses work around parser error in older g++.
- */
-template<typename valType>
-bool RLECompare (const RLEVal<valType> &a, const RLEVal<valType>& b) {
-  return (a.val < b.val) || ((a.val == b.val) && ((a.row) < b.row));
+bool RLECompareRow (const RLEVal<valType>& a, const RLEVal<valType>& b) {
+  return (a.row < b.row);
 }
-
-
-/**
-   @brief Run length-encoded representation of pre-sorted frame.
-
-   Crescent form.
- */
-class RLECresc {
-  const size_t nRow;
-
-  // Empty iff no factor-valued predictors.
-  vector<unsigned int> cardinality;
-
-  // Error if empty.
-  vector<RLEVal<unsigned int> > rle;
-
-  // Sparse numerical representation for split interpolation.
-  // Empty iff no numerical predictors.
-  vector<unsigned int> valOff; // Per-predictor offset within RLE vectors.
-  vector<double> numVal; // Rank-indexable predictor values.
-
-  unsigned int numSortSparse(const double feColNum[],
-			     const unsigned int feRowStart[],
-			     const unsigned int feRunLength[]);
-
-  //  typedef tuple<double, unsigned int, unsigned int> NumRLE;
-
-  /**
-     @brief Stores ordered predictor column, entering uncompressed.
-
-     @param rleNum is a sparse representation of the value/row-number pairs.
-  */
-  void encode(const vector<RLEVal<double> > &rleNum);
-
-
-  /**
-     @brief Emits a run-length encoding of a sorted list.
-
-     @param vr is a stable sorted vector with ranks.
-
-     @param[out] val outputs values associated with the runs.
-
-     @param valUnique is true iff only unique values are to be output.
-   */
-  template<typename tn>
-  void encode(ValRank<tn>& vr, vector<tn>& val, bool valUnique = true);
-
- public:
-
-  RLECresc(size_t nRow_,
-           unsigned int nPredNum,
-           unsigned int nPredFac);
-
-  auto getNRow() const {
-    return nRow;
-  }
-
-  auto getNPredNum() const {
-    return valOff.size();
-  }
-
-  auto getNPredFac() const {
-    return cardinality.size();
-  }
-
-  /**
-     @brief Computes unit size for cross-compatibility of serialization.
-   */
-  static constexpr size_t unitSize() {
-    return sizeof(RLEVal<unsigned int>);
-  }
-
-
-  /** 
-      @brief Accessor for copyable offset vector.
-   */
-  const vector<unsigned int>& getValOff() const {
-    return valOff;
-  }
-
-  /**
-     @brief Accessor for copyable numerical value vector.
-   */
-  const vector<double>& getNumVal() const {
-    return numVal;
-  }
-  
-
-  /**
-     @brief Accessor for copyable cardinality vector.
-   */
-  const vector<unsigned int>& getCardinality() const {
-    return cardinality;
-  }
-
-
-  size_t getRLEBytes() const {
-    return sizeof(RLEVal<unsigned int>) * rle.size();
-  }
-
-  
-  void dumpRLE(unsigned char rleRaw[]) const;
-
-
-  /**
-     @brief Presorts runlength-encoded numerical block supplied by front end.
-
-     @param feValNum[] is a vector of numerical values.
-
-     @param feRowStart[] maps row indices to offset within value vector.
-
-     @param feRunLength[] is length of each run of values.
-   */
-  void numSparse(const double feValNum[],
-		 const unsigned int feRowStart[],
-		 const unsigned int feRunLength[]);
-
-
-  /**
-     @brief Presorts dense numerical block supplied by front end.
-
-     @param feNum references a block of factor-valued data.
-   */
-  void numDense(const double feNum[]);
-
-  
-  /**
-     @brief Presorts factors and stores as rank-ordered run-length encoding.
-
-     Assumes 0-justification ensured by bridge.
-
-     @param feFac references a block of factor-valued data.
-
-     Final "rank" values are the internal factor codes and may contain
-     gaps.  A dense numbering scheme would entail backmapping at LH bit
-     assignment following splitting (q.v.):  prediction and training
-     must be able to reconcile separately-assigned factor levels.
-  */ 
-  void facDense(const unsigned int feFac[]);
-};
 
 
 /**
    @brief Completed form, constructed from front end representation.
  */
 struct RLEFrame {
-  const size_t nRow;
-  const vector<unsigned int> cardinality;
-  const size_t rleLength;
-  const RLEVal<unsigned int>* rle;
-  const unsigned int nPredNum;
-  const double* numVal;
-  const unsigned int* valOff;
+  const size_t nObs;
+  const vector<unsigned int> factorTop; ///> top factor index / 0.
+  const size_t noRank; ///> Inattainable rank index.
+  vector<vector<RLEVal<szType>>> rlePred;
+  vector<vector<double>> numRanked;
+  vector<vector<unsigned int>> facRanked;
+  vector<unsigned int> blockIdx; ///> position of value in block.
 
-  RLEFrame(size_t nRow_,
-           const vector<unsigned int>& cardinality_,
-           size_t rlLength_,
-           const RLEVal<unsigned int>* rle_,
-           unsigned int nPredNum_,
-           const double* numVal_,
-           const unsigned int* valOff_);
+  /**
+     @brief Constructor from unpacked representation.
+   */
+  RLEFrame(size_t nObs_,
+	   const vector<unsigned int>& factorTop_,
+	   const vector<size_t>& runVal,
+	   const vector<size_t>& runLength,
+	   const vector<size_t>& runObs,
+	   const vector<size_t>& rleHeight_,
+	   const vector<double>& numVal_,
+	   const vector<size_t>& numHeight_,
+	   const vector<unsigned int>& facVal_,
+	   const vector<size_t>& facHeight_);
+
+
+  /**
+     @brief Builds the per-predictor vectors of run-length encodings.
+   */
+  static vector<vector<RLEVal<szType>>> packRLE(const vector<size_t>& rleHeight,
+						const vector<size_t>& runVal,
+						const vector<size_t>& runRow,
+						const vector<size_t>& runLength);
+
 
   /**
      @brief Row count getter.
    */
   const auto getNRow() const {
-    return nRow;
+    return nObs;
   }
 
   /**
      @brief Predictor count getter.
    */
   const auto getNPred() const {
-    return nPredNum + cardinality.size();
+    return rlePred.size();
   }
 
 
@@ -239,15 +90,81 @@ struct RLEFrame {
      @brief Numeric predictor count getter.
    */
   const auto getNPredNum() const {
-    return nPredNum;
+    return numRanked.size();
+  }
+
+
+  /**
+     @brief Numeric predictor count getter.
+   */
+  const auto getNPredFac() const {
+    return facRanked.size();
+  }
+
+
+  unsigned int getBlockIdx(unsigned int predIdx) const {
+    return blockIdx[predIdx];
+  }
+
+
+  unsigned int getFactorTop(unsigned int predIdx) const {
+    return factorTop[predIdx];
+  }
+  
+
+  const vector<RLEVal<szType>>& getRLE(unsigned int predIdx) const {
+    return rlePred[predIdx];
   }
 
   
-  const vector<unsigned int>& getCardinality() const {
-    return cardinality;
+  /**
+     @brief Derives # distinct values, including possible NA.
+     
+     @param predIdx is the predictor index.
+
+     @return (zero-based) rank of rear, plus one.
+   */
+  size_t getRunCount(unsigned int predIdx) const {
+    return rlePred[predIdx].back().val + 1;
+  }
+
+
+  /**
+     @brief Reorders the predictor RLE vectors by row.
+   */
+  void reorderRow();
+
+
+  /**
+     @return rank index of missing data, if any, else noRank.
+   */
+  size_t findRankMissing(unsigned int predIdx) const;
+
+
+  vector<RLEVal<szType>> permute(unsigned int predIdx,
+				 const vector<size_t>& idxPerm) const;
+
+
+  /**
+     @brief Obtains the predictor rank at a given row.
+
+     @param[in, out] idxTr gives the element referencing row.
+
+     @param row is the specified row.
+
+     @return rank at the given row, per predictor.
+   */
+  vector<szType> idxRank(vector<size_t>& idxTr,
+			       size_t row) const {
+    vector<szType> rankVec(idxTr.size());
+    for (unsigned int predIdx = 0; predIdx < rankVec.size(); predIdx++) {
+      if (row >= rlePred[predIdx][idxTr[predIdx]].getRowEnd()) {
+	idxTr[predIdx]++;
+      }
+      rankVec[predIdx] = rlePred[predIdx][idxTr[predIdx]].val;
+    }
+    return rankVec;
   }
 };
 
-
 #endif
-

@@ -8,18 +8,20 @@
 /**
    @file indexset.h
 
-   @brief Contiguous subsets of the ObsPart buffer.
+   @brief Frontier nodes represented as contiguous subsets of the ObsPart buffer.
 
    @author Mark Seligman
  */
 
-#ifndef PARTITION_INDEXSET_H
-#define PARTITION_INDEXSET_H
+#ifndef FRONTIER_INDEXSET_H
+#define FRONTIER_INDEXSET_H
+
 
 
 #include "splitcoord.h"
 #include "sumcount.h"
-#include "replay.h"
+#include "branchsense.h"
+
 
 /**
    Index tree node fields associated with the response, viz., invariant across
@@ -30,144 +32,85 @@
    IndexSets only live within a single level.
 */
 class IndexSet {
-  IndexT splitIdx; // Unique level identifier.
-  IndexT ptId; // Index of associated pretree node.
-  IndexRange bufRange;  // Positions within obs-part buffer:  Swiss cheese.
+  static IndexT minNode;
 
-  IndexT sCount;  // # samples subsumed by this set.
-  double sum; // Sum of all responses in set.
+  const IndexT splitIdx; // Unique level identifier.
+  const IndexRange bufRange;  // Swiss cheese positions within obsPart buffer.
+  const IndexT sCount;  // # samples subsumed by this set.
+  const double sum; // Sum of all responses in set.
+  const PathT path; // Bitwise record of recent reaching L/R path.
+  const IndexT ptId; // Index of associated pretree node.
+  const vector<SumCount> ctgSum;  // Per-category sum decomposition.
+
   double minInfo; // Split threshold:  reset after splitting.
-  IndexT relBase; // Local copy of frontier's value.
-  unsigned char path; // Bitwise record of recent reaching L/R path.
-  vector<SumCount> ctgSum;  // Per-category response sums.
 
   // Post-splitting fields:  (Updated iff argMax nontrivial.)
-  bool doesSplit; // iff local conditions satisfied.
-  bool unsplitable;  // Candidate found to have single response value.
-  IndexT lhExtent; // Total indices over LH.
-  IndexT lhSCount; // Total samples over LH.
+  bool doesSplit; // Sets iff local conditions satisfied.
 
+  // Set by fiat or discovery.  E.g., candidate has single response value.
+  bool unsplitable; 
+
+  // Map position:  successor true index if nonterminal otherwise terminal index.
+  IndexT idxNext;
+  
   // Revised per criterion, assumed registered in order.
-  double sumL; // Acummulates sum of left index responses.
+  IndexT extentTrue; // Total indices over true branch.
+  IndexT sCountTrue; // Total samples over true branch.
+  double sumTrue; // Acummulates sum of true branch responses.
 
-  // Whether node is implicitly left:  defined iff doesSplit.
+  // Whether node encoding is implicitly true:  defined iff doesSplit.
   // May be updated multiple times by successive criteria.  Final
   // criterion prevails, assuming criteria accrue conditionally.
-  bool leftImpl;
+  bool trueEncoding;
+  vector<SumCount> ctgTrue; // Per-category sums updatable from criterion.
 
-  // State repeatedly polled and/or updated by Reindex methods.  Hence
-  // appropriate to cache.
-  //
-  IndexT ptLeft;
-  IndexT ptRight;
-  IndexT succLeft; // Fixed:  level index of left successor, if any.
-  IndexT succRight; // Fixed:  " " right " "
-  IndexT offLeft; // Increases:  accumulating left offset.
-  IndexT offRight; // " "                     right offset.
-  unsigned char pathLeft;  // Fixed:  path to left successor, if any.
-  unsigned char pathRight; // Fixed:  " " right " ".
+  // Precipitates setting of unsplitable in respective successor.
+  bool trueExtinct;
+  bool falseExtinct;
 
-  // These fields pertain only to non-splitting sets, so can be
-  // overlaid with above via a union.
-  IndexT succOnly; // Fixed:  successor IndexSet.
-  IndexT offOnly; // Increases:  accumulating successor offset.
+public:
 
-  vector<SumCount> ctgLeft; // Per-category sums inherited from criterion.
+  /**
+     @brief Root node constructor.
+   */
+  IndexSet(const class SampledObs* sample);
+
+
+  /**
+     @brief Successor node constructor.
+   */
+  IndexSet(const class Frontier *frontier,
+	   const IndexSet& pred,
+	   bool trueBranch);
+
+
+  static void immutables(IndexT minNode);
+
+  
+  static void deImmutables();
+
+
+  /**
+     @brief Updates branch state from criterion encoding.
+
+     @param enc encapsulates the splitting criteria.
+   */
+  void update(const struct CritEncoding& enc);
 
   
   /**
-     @brief Initializes certain fields to a default terminal state.
+     @brief Selects best splitter, if any.
 
-     @param inatt is an inattainable value.
+     @return maximal- or zero=information candidate for node.
    */
-  void initInattainable(IndexT inatt) {
-    succLeft = succRight = offLeft = offRight = inatt;
-  }
+  class SplitNux candMax(const vector<class SplitNux>& cand) const;
+
+
+  /**
+     @return true iff minimum information threshold exceeded.
+   */
+  bool isInformative(const SplitNux& nux) const;
   
-  /**
-     @brief Initializes index set as a successor node.
-  */
-  void succInit(class Frontier *frontier,
-                const IndexSet* par,
-                bool isLeft);
-
-  
-  void nontermReindex(const class Replay* replay,
-                      class Frontier *index,
-                      IndexT idxLive,
-                      vector<IndexT> &succST);
-  
-  /**
-     @brief Caches state necessary for reindexing and useful subsequently.
-  */
-  void nonterminal(class Frontier *frontier);
-
-
-  /**
-     @brief Dispatches index set to frontier.
-
-     @param frontier holds the partitioned data.
-  */
-  void terminal(class Frontier *frontier);
-
-
- public:
-  IndexSet();
-
-
-  /**
-     @brief Initializes root set using sample summary.
-
-     @param sample summarizes the tree's response sampling.
-   */
-  void initRoot(const class Sample* sample);
-
-
-  /**
-     @brief Revises L/R state according to criterion characteristics.
-
-     @param sumExpl is the explicit summand.
-
-     @param ctgExpl are the explicit per-category sums and counts.
-
-     @param leftExpl is true iff explicit hand is left.
-   */
-
-  inline void criterionLR(double sumExpl,
-                          const vector<SumCount>& ctgExpl,
-                          bool leftExpl) {
-    sumL += (leftExpl ? sumExpl : sum - sumExpl);
-    SumCount::incr(ctgLeft, leftExpl ? ctgExpl : SumCount::minus(ctgSum, ctgExpl));
-    leftImpl = !leftExpl; // Final state is most recently registered.
-  }
-
-
-  /**
-     @brief Updates splitting state supplied by a criterion.
-   */
-  inline void consumeCriterion(double minInfo,
-                               IndexT lhSCount,
-                               IndexT lhExtent) {
-    this->doesSplit = true;
-    this->minInfo = minInfo;
-    this->lhSCount += lhSCount;
-    this->lhExtent += lhExtent;
-  }
-
-
-  /**
-     @brief Dispatches according to terminal/nonterminal state.
-   */
-  void dispatch(class Frontier* frontier);
-  
-  /**
-     @brief Node-relative reindexing:  indices contiguous on nodes (index sets).
-  */
-  void reindex(const class Replay* replay,
-               class Frontier *index,
-               IndexT idxLive,
-               vector<IndexT> &succST);
-
 
   /**
      @brief Sums each category for a node splitable in the upcoming level.
@@ -178,23 +121,68 @@ class IndexSet {
   */
   vector<double> sumsAndSquares(double& sumSquares);
 
+
+  /**
+     @brief Computes the successor path along the specified branch.
+   */
+  PathT getPathSucc(bool trueBranch) const;
+
+
   bool isUnsplitable() const {
     return unsplitable;
   }
 
 
+  IndexT getIdxNext() const {
+    return idxNext;
+  }
+  
+
+  void setIdxNext(IndexT mapIdx) {
+    idxNext = mapIdx;
+  }
+  
+  
   /**
-     @brief Produces next level's LH and RH index sets for a split.
+     @brief Sets state unsplitable.
 
-     @param indexNext is the crescent successor level of index sets.
-  */
-  void succHands(Frontier* frontier,
-                 vector<IndexSet>& indexNext) const;
+     Used to terminate splitting loop gracefully.
+   */
+  void setUnsplitable() {
+    unsplitable = true;
+  }
 
 
-  void succHand(Frontier* frontier,
-                vector<IndexSet>& indexNext,
-                bool isLeft) const;
+  /**
+     @brief Sets the respective successor extinction flag.
+
+     @param senseTrue indicates the successor's branch sense.
+   */
+  void setExtinct(bool senseTrue) {
+    if (senseTrue) {
+      trueExtinct = true;
+    }
+    else {
+      falseExtinct = true;
+    }
+  }
+
+
+  void setExtinct() {
+    setExtinct(true);
+    setExtinct(false);
+  }
+
+
+  /**
+     @brief Determines whether a given successor is scheduled for extinction.
+
+     @param senseTrue indicates the successor's branch sense.
+   */
+  bool succExtinct(bool senseTrue) const {
+    return senseTrue ? trueExtinct : falseExtinct;
+  }
+
 
   /**
      @param Determines pretree index of specified successor.
@@ -202,8 +190,23 @@ class IndexSet {
      @return pretree index determined.
    */
   IndexT getPTIdSucc(const class Frontier* frontier,
-                     bool isLeft) const;
+                     bool trueBranch) const;
 
+
+  PathT getPath(unsigned int mask) const {
+    return path & mask;
+  }
+
+  
+  /**
+     @brief Determines terminality by checking split history.
+
+     @return true iff the node did not split.
+   */
+  inline bool isTerminal() const {
+    return !doesSplit;
+  }
+  
   
   /**
      @brief Getter for split index.
@@ -212,6 +215,11 @@ class IndexSet {
     return splitIdx;
   }
 
+
+  const vector<SumCount>& getCtgSumCount() const {
+    return ctgSum;
+  }
+  
   
   /**
      @brief Getter for number of response categories.
@@ -220,46 +228,38 @@ class IndexSet {
     return ctgSum.size();
   }
 
-  
-  inline auto getIdxSucc(bool isLeft) const {
-    return isLeft ? succLeft : succRight;
-  }
-
-
-  inline auto getSumSucc(bool isLeft) const {
-    return isLeft ? sumL : sum - sumL;
-  }
-
 
   /**
-     N.B.:  offset side effected.
+     @brief Successor indices precomputed from smNext.
+
+     By convention, the false-branch successor is one index higher
+     than that for the true branch.
+
+     @param trueBranch is true iff true sense specified.
+
+     @return successor index along specified branch sense.
    */
-  inline auto getOffSucc(bool isLeft) {
-    return isLeft ? offLeft++ : offRight++;
+  inline auto getIdxSucc(bool trueBranch) const {
+    return trueBranch ? idxNext : idxNext + 1;
   }
 
 
-  inline auto getPTSucc(bool isLeft) const {
-    return isLeft ? ptLeft : ptRight;
+  inline auto getSumSucc(bool trueBranch) const {
+    return trueBranch ? sumTrue : sum - sumTrue;
   }
 
 
-  inline auto getPathSucc(bool isLeft) const {
-    return isLeft ? pathLeft : pathRight;
+  inline auto getSCountSucc(bool trueBranch) const {
+    return trueBranch ? sCountTrue : sCount - sCountTrue;
+  }
+
+  inline auto getStartSucc(bool trueBranch) const {
+    return trueBranch ? bufRange.getStart() : bufRange.getStart() + extentTrue;
   }
 
 
-  inline auto getSCountSucc(bool isLeft) const {
-    return isLeft ? lhSCount : sCount - lhSCount;
-  }
-
-  inline auto getStartSucc(bool isLeft) const {
-    return isLeft ? bufRange.getStart() : bufRange.getStart() + lhExtent;
-  }
-
-
-  inline auto getExtentSucc(bool isLeft) const {
-    return isLeft ? lhExtent : bufRange.getExtent() - lhExtent;
+  inline auto getExtentSucc(bool trueBranch) const {
+    return trueBranch ? extentTrue : bufRange.getExtent() - extentTrue;
   }
 
   
@@ -301,75 +301,14 @@ class IndexSet {
      @brief Exposes minimum-information value for the node.
 
      @return minInfo value.
-   */
+  */
   inline auto getMinInfo() const {
     return minInfo;
   }
 
   
-  /**
-     @brief L/R accessor for subtree-relative reindexing.
-
-     @param isExpl is true iff sample index tagged explicit.
-
-     @param explLeft is true iff index both tagged explicitly left.
-
-     @param pathSucc outputs the (possibly pseudo) successor path.
-
-     @param idxSucc outputs the (possibly pseudo) successor index.
-
-     @return index (possibly pseudo) of successor index set.
-   */
-  inline IndexT offspring(const class Replay* replay,
-                          IndexT sIdx,
-                          IndexT& pathSucc,
-                          IndexT& ptSucc) {
-    return doesSplit ? offspringLive(replay->senseLeft(sIdx, leftImpl), pathSucc, ptSucc) : offspringTerm(pathSucc, ptSucc);
-  }
-
-  
-  /**
-     @brief Set path and pretree successor of nonterminal.
-
-     @param isLeft indicates branch sense.
-
-     @return (possibly psuedo-) index of successor IndexSet.
-   */
-  inline IndexT offspringLive(bool isLeft,
-                          IndexT& pathSucc,
-                          IndexT& ptSucc) {
-      pathSucc = getPathSucc(isLeft);
-      ptSucc = getPTSucc(isLeft);
-      return getIdxSucc(isLeft);
-  }
-
-
-  inline IndexT offspringTerm(IndexT& pathSucc,
-			      IndexT& ptSucc) {
-    pathSucc = 0; // Dummy:  overwritten by caller.
-    ptSucc = ptId;
-    return succOnly;
-  }
-
-  
-  /**
-     @brief As above, but also tracks (pseudo) successor indices.  State
-     is side-effected, moreover, so must be invoked sequentially.
-   */
-  inline IndexT offspring(const class Replay* replay,
-                          IndexT sIdx,
-                          unsigned int& pathSucc,
-                          IndexT& idxSucc,
-                          IndexT& ptSucc) {
-    if (doesSplit) {
-      bool isLeft = replay->senseLeft(sIdx, leftImpl);
-      idxSucc = getOffSucc(isLeft);
-      return offspringLive(isLeft, pathSucc, ptSucc);
-    }
-    else {
-      idxSucc = offOnly++;
-      return offspringTerm(pathSucc, ptSucc);
-    }
+  inline bool encodesTrue() const {
+    return trueEncoding;
   }
 };
 

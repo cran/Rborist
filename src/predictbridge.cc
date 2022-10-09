@@ -13,75 +13,172 @@
    @author Mark Seligman
 */
 
+#include "response.h"
+#include "samplerbridge.h"
+#include "sampler.h"
+#include "leafbridge.h"
 #include "predictbridge.h"
 #include "predict.h"
-#include "bagbridge.h"
+#include "quant.h"
 #include "forestbridge.h"
 #include "forest.h"
-#include "leafbridge.h"
-#include "leaf.h"
-#include "quant.h"
+#include "rleframe.h"
 #include "ompthread.h"
 
 
-PredictBridge::PredictBridge(bool oob,
-                             unique_ptr<ForestBridge> forest_,
-                             unique_ptr<BagBridge> bag_,
-                             unique_ptr<LeafBridge> leaf_,
-                             const vector<double>& quantile,
-                             unsigned int nThread) :
-  bag(move(bag_)),
-  forest(move(forest_)),
-  leaf(move(leaf_)),
-  quant(make_unique<Quant>(static_cast<LeafFrameReg*>(leaf->getLeaf()), bag->getBag(), quantile)),
-  predictCore(make_unique<Predict>(bag->getBag(), forest->getForest(), leaf->getLeaf(), quant.get(), oob)) {
-  OmpThread::init(nThread);
+PredictRegBridge::PredictRegBridge(unique_ptr<RLEFrame> rleFrame_,
+				   unique_ptr<ForestBridge> forestBridge_,
+				   unique_ptr<SamplerBridge> samplerBridge_,
+				   unique_ptr<LeafBridge> leafBridge_,
+				   vector<double> yTest,
+				   unsigned int nPermute_,
+				   bool trapUnobserved,
+				   unsigned int nThread,
+				   vector<double> quantile) :
+  PredictBridge(std::move(rleFrame_), std::move(forestBridge_), nPermute_, nThread),
+  samplerBridge(std::move(samplerBridge_)),
+  leafBridge(std::move(leafBridge_)),
+  predictRegCore(make_unique<PredictReg>(forestBridge->getForest(), samplerBridge->getSampler(), leafBridge->getLeaf(), rleFrame.get(), std::move(yTest), nPermute, std::move(quantile), trapUnobserved)) {
 }
 
 
-PredictBridge::PredictBridge(bool oob,
-                             unique_ptr<ForestBridge> forest_,
-                             unique_ptr<BagBridge> bag_,
-                             unique_ptr<LeafBridge> leaf_,
-                             unsigned int nThread) :
-  bag(move(bag_)),
-  forest(move(forest_)),
-  leaf(move(leaf_)),
-  quant(nullptr),
-  predictCore(make_unique<Predict>(bag->getBag(), forest->getForest(), leaf->getLeaf(), quant.get(), oob)) {
+PredictRegBridge::~PredictRegBridge() {
+}
+
+
+PredictCtgBridge::PredictCtgBridge(unique_ptr<RLEFrame> rleFrame_,
+				   unique_ptr<ForestBridge> forestBridge_,
+				   unique_ptr<SamplerBridge> samplerBridge_,
+				   unique_ptr<LeafBridge> leafBridge_,
+				   vector<unsigned int> yTest,
+				   unsigned int nPermute_,
+				   bool doProb,
+				   bool trapUnobserved,
+				   unsigned int nThread) :
+  PredictBridge(std::move(rleFrame_), std::move(forestBridge_), nPermute_, nThread),
+  samplerBridge(std::move(samplerBridge_)),
+  predictCtgCore(make_unique<PredictCtg>(forestBridge->getForest(), samplerBridge->getSampler(), rleFrame.get(), std::move(yTest), nPermute, doProb, trapUnobserved)) {
+}
+
+
+PredictCtgBridge::~PredictCtgBridge() {
+}
+
+
+PredictBridge::PredictBridge(unique_ptr<RLEFrame> rleFrame_,
+                             unique_ptr<ForestBridge> forestBridge_,
+			     unsigned int nPermute_,
+			     unsigned int nThread) :
+  rleFrame(std::move(rleFrame_)),
+  forestBridge(std::move(forestBridge_)),
+  nPermute(nPermute_) {
+  Forest::init(rleFrame->getNPred());
   OmpThread::init(nThread);
 }
 
 
 PredictBridge::~PredictBridge() {
+  Forest::deInit();
   OmpThread::deInit();
 }
 
 
-LeafBridge* PredictBridge::getLeaf() const {
-  return leaf.get();
+size_t PredictBridge::getNRow() const {
+  return rleFrame->getNRow();
 }
 
 
-const vector<double> PredictBridge::getQPred() const {
-
-  return (quant == nullptr || quant->getNRow() == 0) ? vector<double>(0) : quant->getQPred();
+bool PredictBridge::permutes() const {
+  return nPermute > 0;
 }
 
 
-const vector<double> PredictBridge::getQEst() const {
-  return (quant == nullptr || quant->getNRow() == 0) ? vector<double>(0) : quant->getQEst();
+void PredictRegBridge::predict() const {
+  predictRegCore->predict(rleFrame.get());
 }
 
 
-size_t PredictBridge::getBlockRows(size_t rowCount) {
-  return PredictFrame::getBlockRows(rowCount);
+void PredictCtgBridge::predict() const {
+  predictCtgCore->predict(rleFrame.get());
 }
 
 
-void PredictBridge::predictBlock(const BlockDense<double>* blockNum,
-                                 const BlockDense<unsigned int>* blockFac,
-                                 size_t rowStart) const {
-  unique_ptr<PredictFrame> frame(make_unique<PredictFrame>(predictCore.get(), blockNum, blockFac));
-  frame->predictAcross(rowStart);
+const vector<unsigned int>& PredictCtgBridge::getYPred() const {
+  return predictCtgCore->getYPred();
+}
+
+
+const vector<size_t>& PredictCtgBridge::getConfusion() const {
+  return predictCtgCore->getConfusion();
+}
+
+
+const vector<double>& PredictCtgBridge::getMisprediction() const {
+  return predictCtgCore->getMisprediction();
+}
+
+
+const vector<vector<double>>& PredictCtgBridge::getMispredPermuted() const {
+  return predictCtgCore->getMispredPermuted();
+}
+
+
+double PredictCtgBridge::getOOBError() const {
+  return predictCtgCore->getOOBError();
+}
+
+
+const vector<double>& PredictCtgBridge::getOOBErrorPermuted() const {
+  return predictCtgCore->getOOBErrorPermuted();
+}
+
+
+unsigned int PredictCtgBridge::ctgIdx(unsigned int ctgTest,
+				      unsigned int ctgPred) const {
+  return predictCtgCore->ctgIdx(ctgTest, ctgPred);
+}
+
+
+const unsigned int* PredictCtgBridge::getCensus() const {
+  return predictCtgCore->getCensus();
+}
+
+
+const vector<double>& PredictCtgBridge::getProb() const {
+  return predictCtgCore->getProb();
+}
+
+
+double PredictRegBridge::getSAE() const {
+  return predictRegCore->getSAE();
+}
+
+
+double PredictRegBridge::getSSE() const {
+  return predictRegCore->getSSE();
+}
+
+
+const vector<double>& PredictRegBridge::getSSEPermuted() const {
+  return predictRegCore->getSSEPermuted();
+}
+
+
+const vector<double>& PredictRegBridge::getYTest() const {
+  return predictRegCore->getYTest();
+}
+
+
+const vector<double>& PredictRegBridge::getYPred() const {
+  return predictRegCore->getYPred();
+}
+
+
+const vector<double> PredictRegBridge::getQPred() const {
+  return predictRegCore->getQPred();
+}
+
+
+const vector<double> PredictRegBridge::getQEst() const {
+  return predictRegCore->getQEst();
 }
