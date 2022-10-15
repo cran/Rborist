@@ -1,4 +1,4 @@
-78c0d16ce940bdbe570b09917a26206b *DESCRIPTION
+1a6f9bdeeed58cacaefd52a17137fa2f *DESCRIPTION
 aeed2599b93947d261d7cedbf7fb37bd *LICENSE
 d3838415462e14b97b4518cf1701be80 *NAMESPACE
 e61a7b6242b34e0ebd6d8eae5a9dde25 *R/Export.R
@@ -37,8 +37,8 @@ e5711422c2a5608afd659c30861b9f59 *src/accum.h
 dca5035a45a655b5fbbed8581b3710b6 *src/block.h
 e6fff35e63800ecae1bba5a43e540f82 *src/branchsense.cc
 2682f809325a54acdb383d60846e6734 *src/branchsense.h
-0f3f60e410fa7d58861b4ff83397be63 *src/bv.cc
-16f37dd16ae300ee89971e672f9929c7 *src/bv.h
+42f17758c12884913e7f309bbd975ae9 *src/bv.cc
+e188d8f5e2e00b5f7f67767b4a595aaf *src/bv.h
 06f3dd304950d5cb28eaa0f0ca55cb0a *src/cand.cc
 e3db23a7becddaacf69bfecf99f0743f *src/cand.h
 412ac32caaf1a92f9c86ec75d358a460 *src/candrf.cc
@@ -105,7 +105,7 @@ dfd1ed7e239a34bc24315ba78e42144e *src/predict.cc
 43558cfdc62b12f0dfe15219405ab5c7 *src/predictbridge.h
 1786c56f111871b0d57dbacff936cd94 *src/predictorframe.cc
 64db1cdff5b1229b90d13cb011ff18e2 *src/predictorframe.h
-0df441b9e92c147db457a515e5a77c24 *src/pretree.cc
+fdf4f256f0050016fdfec451d469ad34 *src/pretree.cc
 4fd67ae048595e732368b926ea42f63f *src/pretree.h
 00fd4e0d9aa5e2092637751704e4c9b2 *src/prng.cc
 b9b3cd371ee3a79acf6a525b09885840 *src/prng.h
