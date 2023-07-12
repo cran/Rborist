@@ -1,19 +1,19 @@
-// Copyright (C)  2012-2022   Mark Seligman
+// Copyright (C)  2012-2023   Mark Seligman
 //
-// This file is part of rfR.
+// This file is part of RboristBase.
 //
-// rfR is free software: you can redistribute it and/or modify it
+// RboristBase is free software: you can redistribute it and/or modify it
 // under the terms of the GNU General Public License as published by
 // the Free Software Foundation, either version 2 of the License, or
 // (at your option) any later version.
 //
-// rfR is distributed in the hope that it will be useful, but
+// RboristBase is distributed in the hope that it will be useful, but
 // WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 // GNU General Public License for more details.
 //
 // You should have received a copy of the GNU General Public License
-// along with rfR.  If not, see <http://www.gnu.org/licenses/>.
+// along with RboristBase.  If not, see <http://www.gnu.org/licenses/>.
 
 /**
    @file forestR.cc
@@ -26,6 +26,7 @@
 #include "resizeR.h"
 #include "forestR.h"
 #include "forestbridge.h"
+#include "trainR.h"
 
 
 const string FBTrain::strNTree = "nTree";
@@ -140,21 +141,22 @@ List FBTrain::wrap() {
 }
 
 
-unique_ptr<ForestBridge> ForestRf::unwrap(const List& lTrain) {
+ForestBridge ForestR::unwrap(const List& lTrain) {
   List lForest(checkForest(lTrain));
   List lNode((SEXP) lForest[FBTrain::strNode]);
   List lFactor((SEXP) lForest[FBTrain::strFactor]);
-  return make_unique<ForestBridge>(as<unsigned int>(lForest[FBTrain::strNTree]),
-				   as<NumericVector>(lNode[FBTrain::strExtent]).begin(),
-				   (complex<double>*) as<ComplexVector>(lNode[FBTrain::strTreeNode]).begin(),
-				   as<NumericVector>(lForest[FBTrain::strScores]).begin(),
-				   as<NumericVector>(lFactor[FBTrain::strExtent]).begin(),
-				   as<RawVector>(lFactor[FBTrain::strFacSplit]).begin(),
-				   as<RawVector>(lFactor[FBTrain::strObserved]).begin());    
+  return ForestBridge(as<unsigned int>(lForest[FBTrain::strNTree]),
+		      as<NumericVector>(lNode[FBTrain::strExtent]).begin(),
+		      (complex<double>*) as<ComplexVector>(lNode[FBTrain::strTreeNode]).begin(),
+		      as<NumericVector>(lForest[FBTrain::strScores]).begin(),
+		      as<NumericVector>(lFactor[FBTrain::strExtent]).begin(),
+		      as<RawVector>(lFactor[FBTrain::strFacSplit]).begin(),
+		      as<RawVector>(lFactor[FBTrain::strObserved]).begin(),
+		      as<IntegerVector>(lTrain[TrainR::strPredMap]).length());
 }
 
 
-List ForestRf::checkForest(const List& lTrain) {
+List ForestR::checkForest(const List& lTrain) {
   BEGIN_RCPP
 
   List lForest((SEXP) lTrain["forest"]);
@@ -167,34 +169,29 @@ List ForestRf::checkForest(const List& lTrain) {
 }
 
 
-unique_ptr<ForestExport> ForestExport::unwrap(const List& lTrain,
-                                              const IntegerVector& predMap) {
-  (void) ForestRf::checkForest(lTrain);
-  return make_unique<ForestExport>(lTrain, predMap);
+ForestExpand ForestExpand::unwrap(const List& lTrain,
+				  const IntegerVector& predMap) {
+  (void) ForestR::checkForest(lTrain);
+  return ForestExpand(lTrain, predMap);
 }
 
 
-ForestExport::ForestExport(const List &lTrain,
-                           const IntegerVector &predMap) :
-  forestBridge(ForestRf::unwrap(lTrain)),
-  predTree(vector<vector<unsigned int> >(forestBridge->getNTree())),
-  bumpTree(vector<vector<size_t> >(forestBridge->getNTree())),
-  splitTree(vector<vector<double > >(forestBridge->getNTree())),
-  facSplitTree(vector<vector<unsigned char> >(forestBridge->getNTree())) {
-  forestBridge->dump(predTree, splitTree, bumpTree, facSplitTree);
+ForestExpand::ForestExpand(const List &lTrain,
+                           const IntegerVector& predMap) {
+  ForestBridge forestBridge = ForestR::unwrap(lTrain);
+  predTree = vector<vector<unsigned int>>(forestBridge.getNTree());
+  bumpTree = vector<vector<size_t> >(forestBridge.getNTree());
+  splitTree = vector<vector<double > >(forestBridge.getNTree());
+  facSplitTree = vector<vector<unsigned char> >(forestBridge.getNTree());
+  forestBridge.dump(predTree, splitTree, bumpTree, facSplitTree);
   predExport(predMap.begin());
-}
-
-
-unsigned int ForestExport::getNTree() const {
-  return forestBridge->getNTree();
 }
 
 
 /**
    @brief Prepares predictor field for export by remapping to front-end indices.
  */
-void ForestExport::predExport(const int predMap[]) {
+void ForestExpand::predExport(const int predMap[]) {
   for (unsigned int tIdx = 0; tIdx < predTree.size(); tIdx++) {
     treeExport(predMap, predTree[tIdx], bumpTree[tIdx]);
   }
@@ -203,12 +200,10 @@ void ForestExport::predExport(const int predMap[]) {
 
 /**
    @brief Recasts 'pred' field of nonterminals to front-end facing values.
-
-   @return void.
  */
-void ForestExport::treeExport(const int predMap[],
-                            vector<unsigned int> &pred,
-                            const vector<size_t>& bump) {
+void ForestExpand::treeExport(const int predMap[],
+			      vector<unsigned int>& pred,
+			      const vector<size_t>& bump) {
   for (unsigned int i = 0; i < pred.size(); i++) {
     if (bump[i] > 0) { // terminal 'pred' values do not reference predictors.
       unsigned int predCore = pred[i];

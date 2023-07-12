@@ -1,4 +1,4 @@
-// Copyright (C)  2012-2022  Mark Seligman
+// Copyright (C)  2012-2023  Mark Seligman
 //
 // This file is part of rf.
 //
@@ -13,7 +13,7 @@
 // GNU General Public License for more details.
 //
 // You should have received a copy of the GNU General Public License
-// along with rfR.  If not, see <http://www.gnu.org/licenses/>.
+// along with RboristBase.  If not, see <http://www.gnu.org/licenses/>.
 
 /**
    @file forestRf.H
@@ -24,8 +24,8 @@
 
  */
 
-#ifndef RF_FOREST_R_H
-#define RF_FOREST_R_H
+#ifndef FOREST_R_H
+#define FOREST_R_H
 
 
 #include <Rcpp.h>
@@ -35,10 +35,11 @@ using namespace Rcpp;
 #include <vector>
 using namespace std;
 
+
 /**
    @brief Front-end access to ForestBridge.
  */
-struct ForestRf {
+struct ForestR {
 
   /**
      @brief Looks up and verifies forest member.
@@ -55,7 +56,7 @@ struct ForestRf {
 
      @return bridge specialization of Forest prediction type.
   */
-  static unique_ptr<struct ForestBridge> unwrap(const List &sTrain);
+  static struct ForestBridge unwrap(const List& sTrain);
 };
 
 
@@ -63,10 +64,10 @@ struct ForestRf {
    @brief As above, but with additional members to facilitate dumping on
    a per-tree basis.
  */
-class ForestExport {
-  unique_ptr<struct ForestBridge> forestBridge;
+class ForestExpand {
   vector<vector<unsigned int> > predTree;
   vector<vector<size_t> > bumpTree;
+  vector<vector<int>> senseTree;
   vector<vector<double > > splitTree;
   vector<vector<unsigned char> > facSplitTree;
 
@@ -76,14 +77,13 @@ class ForestExport {
                   const vector<size_t>& bump);
 
  public:
-  ForestExport(const List& forestList,
+  ForestExpand(const List& forestList,
                const IntegerVector& predMap);
 
-  static unique_ptr<ForestExport> unwrap(const List &lTrain,
-                                         const IntegerVector &predMap);
+  static ForestExpand unwrap(const List &lTrain,
+			     const IntegerVector &predMap);
 
-  unsigned int getNTree() const;
-  
+
   /**
      @brief Exportation methods for unpacking per-tree node contents
      as separate vectors.
@@ -106,6 +106,11 @@ class ForestExport {
 
   const vector<unsigned char>& getFacSplitTree(unsigned int tIdx) const {
     return facSplitTree[tIdx];
+  }
+
+
+  const vector<vector<int>>& getSenseTree() const {
+    return senseTree;
   }
 };
 

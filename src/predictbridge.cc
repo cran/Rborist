@@ -14,71 +14,73 @@
 */
 
 #include "response.h"
-#include "samplerbridge.h"
 #include "sampler.h"
-#include "leafbridge.h"
 #include "predictbridge.h"
 #include "predict.h"
 #include "quant.h"
-#include "forestbridge.h"
-#include "forest.h"
 #include "rleframe.h"
 #include "ompthread.h"
 
 
 PredictRegBridge::PredictRegBridge(unique_ptr<RLEFrame> rleFrame_,
-				   unique_ptr<ForestBridge> forestBridge_,
-				   unique_ptr<SamplerBridge> samplerBridge_,
-				   unique_ptr<LeafBridge> leafBridge_,
+				   ForestBridge forestBridge_,
+				   SamplerBridge samplerBridge_,
+				   LeafBridge leafBridge_,
 				   vector<double> yTest,
 				   unsigned int nPermute_,
+				   bool indexing,
 				   bool trapUnobserved,
 				   unsigned int nThread,
 				   vector<double> quantile) :
   PredictBridge(std::move(rleFrame_), std::move(forestBridge_), nPermute_, nThread),
   samplerBridge(std::move(samplerBridge_)),
   leafBridge(std::move(leafBridge_)),
-  predictRegCore(make_unique<PredictReg>(forestBridge->getForest(), samplerBridge->getSampler(), leafBridge->getLeaf(), rleFrame.get(), std::move(yTest), nPermute, std::move(quantile), trapUnobserved)) {
+  predictRegCore(make_unique<PredictReg>(forestBridge.getForest(), samplerBridge.getSampler(), leafBridge.getLeaf(), rleFrame.get(), std::move(yTest), PredictOption(nPermute, indexing, trapUnobserved), std::move(quantile))) {
 }
 
 
-PredictRegBridge::~PredictRegBridge() {
+PredictBridge::PredictBridge(PredictBridge&& antec) :
+  rleFrame(std::move(antec.rleFrame)),
+  forestBridge(std::move(antec.forestBridge)),
+  nPermute(antec.nPermute) {
 }
+
+
+PredictRegBridge::~PredictRegBridge() = default;
 
 
 PredictCtgBridge::PredictCtgBridge(unique_ptr<RLEFrame> rleFrame_,
-				   unique_ptr<ForestBridge> forestBridge_,
-				   unique_ptr<SamplerBridge> samplerBridge_,
-				   unique_ptr<LeafBridge> leafBridge_,
+				   ForestBridge forestBridge_,
+				   SamplerBridge samplerBridge_,
+				   LeafBridge leafBridge_,
 				   vector<unsigned int> yTest,
 				   unsigned int nPermute_,
 				   bool doProb,
+				   bool indexing,
 				   bool trapUnobserved,
 				   unsigned int nThread) :
   PredictBridge(std::move(rleFrame_), std::move(forestBridge_), nPermute_, nThread),
   samplerBridge(std::move(samplerBridge_)),
-  predictCtgCore(make_unique<PredictCtg>(forestBridge->getForest(), samplerBridge->getSampler(), rleFrame.get(), std::move(yTest), nPermute, doProb, trapUnobserved)) {
+  leafBridge(std::move(leafBridge_)),
+  predictCtgCore(make_unique<PredictCtg>(forestBridge.getForest(), samplerBridge.getSampler(), rleFrame.get(), std::move(yTest), PredictOption(nPermute, indexing, trapUnobserved), doProb)) {
 }
 
 
-PredictCtgBridge::~PredictCtgBridge() {
-}
+PredictCtgBridge::~PredictCtgBridge() = default;
 
 
 PredictBridge::PredictBridge(unique_ptr<RLEFrame> rleFrame_,
-                             unique_ptr<ForestBridge> forestBridge_,
+                             ForestBridge forestBridge_,
 			     unsigned int nPermute_,
 			     unsigned int nThread) :
   rleFrame(std::move(rleFrame_)),
   forestBridge(std::move(forestBridge_)),
   nPermute(nPermute_) {
-  Forest::init(rleFrame->getNPred());
   OmpThread::init(nThread);
 }
 
 
 PredictBridge::~PredictBridge() {
-  Forest::deInit();
   OmpThread::deInit();
 }
 
@@ -88,8 +90,23 @@ size_t PredictBridge::getNRow() const {
 }
 
 
+unsigned int PredictBridge::getNTree() const {
+  return forestBridge.getNTree();
+}
+
+
 bool PredictBridge::permutes() const {
   return nPermute > 0;
+}
+
+
+const vector<size_t>& PredictCtgBridge::getIndices() const {
+  return predictCtgCore->getIndices();
+}
+
+
+const vector<size_t>& PredictRegBridge::getIndices() const {
+  return predictRegCore->getIndices();
 }
 
 
@@ -181,4 +198,14 @@ const vector<double> PredictRegBridge::getQPred() const {
 
 const vector<double> PredictRegBridge::getQEst() const {
   return predictRegCore->getQEst();
+}
+
+
+vector<double> PredictBridge::forestWeight(const ForestBridge& forestBridge,
+						   const SamplerBridge& samplerBridge,
+						   const LeafBridge& leafBridge,
+						   const double indices[],
+						   size_t nObs,
+						   unsigned int nThread) {
+  return Predict::forestWeight(forestBridge.getForest(), samplerBridge.getSampler(), leafBridge.getLeaf(), nObs, indices, nThread);
 }

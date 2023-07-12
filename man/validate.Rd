@@ -13,7 +13,7 @@
 \usage{
 \method{validate}{default}(train, sampler, preFormat = NULL,  ctgCensus
 = "votes", impPermute = 0, quantVec = NULL, quantiles =
-!is.null(quantVec), trapUnobserved = FALSE, nThread = 0, verbose =
+!is.null(quantVec), indexing = FALSE, trapUnobserved = FALSE, nThread = 0, verbose =
 FALSE, ...)
 }
 
@@ -28,6 +28,8 @@ FALSE, ...)
   or 1.}
   \item{quantVec}{quantile levels to validate.}
   \item{quantiles}{whether to report quantiles at validation.}
+  \item{indexing}{whether to report final index, typically terminal, of
+  tree traversal.}
   \item{trapUnobserved}{indicates whether to return a nonterminal for
   values unobserved during training, such as missing data.}
   \item{nThread}{suggests an OpenMP-style thread count.  Zero denotes
@@ -36,40 +38,40 @@ FALSE, ...)
   \item{...}{not currently used.}
 }
 
-\value{an object of class \code{validation}:
-  \item{validation}{ list containing either a:
-    
-    \code{ValidReg}{ list of validation results for regression:
-
-      \code{yPred}{ vector containing the predicted response.}
-
-      \code{mae}{ the mean absolute error of prediction.}
-    
-      \code{mse}{ the mean-square error of prediction.}
-
-      \code{rsq}{ the r-squared statistic.}
-
-      \code{qPred}{ matrix containing the prediction quantiles, if requested.}
+\value{an object of one of two classes:
+  \item{SummaryReg}{summarizing regression, consisting of:
+    \code{prediction}{an object of class \code{PredictReg} consisting
+      of:
+      \code{yPred}{the estimated numerical response.}
+      \code{qPred}{quantiles of prediction, if requested.}
+      \code{qEst}{quantile of the estimate, if quantiles requested.}
+      \code{indices}{final index of prediction, if requested.}
+    }
+    \code{validation}{if validation requested, an object of class
+      \code{ValidReg} consisting of:
+      \code{mse}{the mean-square error of the estimate.}
+      \code{rsq}{the r-squared statistic of the estimate.}
+      \code{mae}{the mean absolute error of the estimate.}
+    }
   }
-  or a:
-  \code{ValidCtg}{ list of validation results for classification:
-      
-    \code{yPred}{ vector containing the predicted response.}
-
-    \code{misprediction}{ vector containing the classwise misprediction rates.}
-      
-    \code{confusion}{ the confusion matrix.}
-
-    \code{census}{ matrix of predictions, by category.}
-
-    \code{oobError}{ the out-of-bag error.}
-
-    \code{prob}{ matrix of prediction probabilities by category, if requested.}
+  \item{SummaryCtg}{summarizing classification, consisting of:
+    \code{prediciton}{an object of class \code{PredictCtg} consisting
+      of:
+      \code{yPred}{estimated categorical response.}
+      \code{census}{factor-valued matrix of the estimate, by
+	category, if requested.}
+      \code{prob}{matrix of estimate probabilities, by category, if
+	requested.}
+      \code{indices}{final index of prediction, if requested.}
+    }
+    \code{validation}{if validation requested, an object of class
+      \code{ValidCtg} consisting of:
+      \code{confusion}{the confusion matrix.}
+      \code{misprediction}{the misprediction rate.}
+      \code{oobError}{the out-of-bag error.}
+    }
   }
 }
-}
-  
-
 
 \examples{
 \dontrun{
@@ -86,3 +88,6 @@ FALSE, ...)
 \author{
   Mark Seligman at Suiji.
 }
+
+
+\seealso{\code{\link{Rborist}}}

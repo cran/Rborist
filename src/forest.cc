@@ -51,7 +51,7 @@ vector<size_t> Forest::produceHeight(const vector<size_t>& extents) const {
 }
 
 
-size_t Forest::maxTreeHeight() const {
+size_t Forest::noNode() const {
   size_t maxHeight = 0;
   for (unsigned int tIdx = 0; tIdx < decNode.size(); tIdx++) {
     maxHeight = max(maxHeight, decNode[tIdx].size());
@@ -112,7 +112,7 @@ vector<vector<IndexRange>> Forest::leafDominators() const {
   return leafDom;
 }
   
-  
+
 vector<IndexRange> Forest::leafDominators(const vector<DecNode>& tree) {
   IndexT height = tree.size();
   // Gives each node the offset of its predecessor.

@@ -36,97 +36,53 @@ struct SamplerBridge {
 		bool replace,
 		const double weight[]);
 
+  SamplerBridge(SamplerBridge&& sb);
+
+
+  /**
+     @param bagging specifies a bagging matrix:  prediction only.
+   */
+  SamplerBridge(const vector<double>& yTrain,
+		size_t nSamp,
+		unsigned int nTree,
+		const double samples[],
+		bool bagging = false);
+
+
+  SamplerBridge(const vector<unsigned int>& yTrain,
+		size_t nSamp,
+		unsigned int nTree,
+		const double samples[],
+		unsigned int nCtg,
+		const vector<double>& classWeight);
+
+
+  SamplerBridge(const vector<unsigned int>& yTrain,
+		unsigned int nCtg,
+		size_t nSamp,
+		unsigned int nTree,
+		const double samples[],
+		bool bagging = false);
+
+
+  /**
+     @brief Generic constructor.
+   */
+  SamplerBridge(size_t nObs,
+		const double samples[],
+		size_t nSamp,
+		unsigned int nTree);
+
   
   ~SamplerBridge();
 
 
   /**
-     @brief Sampling entry.
-   */
-  static unique_ptr<SamplerBridge> preSample(size_t nSamp,
-					     size_t nObs,
-					     unsigned int nTree,
-					     bool replace,
-					     const double weight[]);
-
-  /**
-     @brief Regression, training entry.
-   */
-  static unique_ptr<SamplerBridge> trainReg(const vector<double>& yTrain,
-					    size_t nSamp,
-					    unsigned int nTree,
-					    const double samples[]);
-
-
-  /**
-     @brief Regression factory:  post-training.
-   */
-  static unique_ptr<SamplerBridge> readReg(const vector<double>& yTrain,
-					   size_t nSamp,
-					   unsigned int nTree,
-					   const double samples[],
-					   bool bagging);
-
-
-  SamplerBridge(const vector<double>& yTrain,
-		size_t nSamp,
-		vector<vector<class SamplerNux>> samples);
-
-
-  /**
-     @brief Regression constructor:  post-training.
-   */
-  SamplerBridge(const vector<double>& yTrain,
-		size_t nSamp,
-		vector<vector<class SamplerNux>> samples,
-		bool bagging);
-
-
-  /**
-     @brief Classification:  training entry.
-   */
-  static unique_ptr<SamplerBridge> trainCtg(const vector<unsigned int>& yTrain,
-					    size_t nSamp,
-					    unsigned int nTree,
-					    const double samples[],
-					    unsigned int nCtg,
-					    const vector<double>& classWeight);
-
-
-  SamplerBridge(const vector<unsigned int>& yTrain,
-		size_t nSamp,
-		vector<vector<class SamplerNux>> nux,
-		unsigned int nCtg,
-		const vector<double>& classWeight);
-
-
-  /**
-     @brief Categorical constructor:  post-training.
-   */
-  static unique_ptr<SamplerBridge> readCtg(const vector<unsigned int>& yTrain,
-					   unsigned int nCtg,
-					   size_t nSamp,
-					   unsigned int nTree,
-					   const double samples[],
-					   bool bagging);
-
-
-  SamplerBridge(const vector<unsigned int>& yTrain,
-		size_t nSamp,
-		vector<vector<class SamplerNux>> samples,
-		unsigned int nCtg,
-		bool bagging);
-
-  
-  /**
      @brief Invokes core sampling for a single tree.
    */
   void sample();
 
-  
-  void appendSamples(const vector<size_t>& idx); // EXIT: internalized.
 
-  
   /**
      @brief Gets core Sampler.  Non-constant for training.
 

@@ -1,19 +1,19 @@
-// Copyright (C)  2012-2022   Mark Seligman
+// Copyright (C)  2012-2023   Mark Seligman
 //
-// This file is part of rf
+// This file is part of RboristBase.
 //
-// rf is free software: you can redistribute it and/or modify it
+// RboristBase is free software: you can redistribute it and/or modify it
 // under the terms of the GNU General Public License as published by
 // the Free Software Foundation, either version 2 of the License, or
 // (at your option) any later version.
 //
-// rf is distributed in the hope that it will be useful, but
+// RboristBase is distributed in the hope that it will be useful, but
 // WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 // GNU General Public License for more details.
 //
 // You should have received a copy of the GNU General Public License
-// along with rfR.  If not, see <http://www.gnu.org/licenses/>.
+// along with RboristBase.  If not, see <http://www.gnu.org/licenses/>.
 
 /**
    @file trainR.h
@@ -23,8 +23,8 @@
    @author Mark Seligman
  */
 
-#ifndef RF_TRAIN_R_H
-#define RF_TRAIN_R_H
+#ifndef RBORISTBASE_TRAIN_R_H
+#define RBORISTBASE_TRAIN_R_H
 
 #include <Rcpp.h>
 using namespace Rcpp;
@@ -34,38 +34,42 @@ using namespace Rcpp;
 #include <vector>
 using namespace std;
 
-
-/**
-   @brief Main training entry from front end.
- */
-RcppExport SEXP rfTrain(const SEXP sRLEFrame,
-			const SEXP sSampler,
-			const SEXP sArgList);
+#include "leafR.h"
+#include "forestR.h"
+#include "samplerbridge.h"
 
 
-struct TrainRf {
+struct TrainR {
 
   // Training granularity.  Values guesstimated to minimize footprint of
   // Core-to-Bridge copies while also not over-allocating:
   static constexpr unsigned int treeChunk = 20;
   static constexpr double allocSlop = 1.2;
 
-  static bool verbose; // Whether to report progress while training.
+  static const string strVersion;
+  static const string strSignature;
+  static const string strSamplerHash;
+  static const string strPredInfo;
+  static const string strPredMap;
+  static const string strForest;
+  static const string strLeaf;
+  static const string strDiagnostic;
+  static const string strClassName;
 
-  const unsigned int nTree; // # trees under training.
-  unique_ptr<struct LeafR> leaf; // Summarizes sample-to-leaf mapping.
-  unique_ptr<struct FBTrain> forest; // Pointer to core forest.
-  NumericVector predInfo; // Forest-wide sum of predictors' split information.
+  static bool verbose; ///< Whether to report progress while training.
+
+  const SamplerBridge samplerBridge;
+  const unsigned int nTree; ///< # trees under training.
+  LeafR leaf; ///< Summarizes sample-to-leaf mapping.
+  FBTrain forest; ///< Pointer to core forest.
+  NumericVector predInfo; ///< Forest-wide sum of predictors' split information.
 
 
-  /**
-     @brief Constructor employing SamplerBridge handle.
-   */
-  TrainRf(const struct SamplerBridge* sb);
+  TrainR(const List& lSampler,
+	 const List& argList);
 
 
-  void trainChunks(const struct SamplerBridge* sb,
-		   const struct TrainBridge* tb,
+  void trainChunks(const struct TrainBridge& tb,
 		   bool thinLeaves);
 
 
@@ -74,50 +78,34 @@ struct TrainRf {
 
      @return remapped vector of scaled information values.
    */
-  NumericVector scaleInfo(const TrainBridge* trainBridge) const;
+  NumericVector scaleInfo(const TrainBridge& trainBridge) const;
 
   
   /**
      @return implicit R_NilValue.
    */
   static SEXP initFromArgs(const List &argList,
-			   struct TrainBridge* trainBridge);
+			   struct TrainBridge& trainBridge);
 
 
   /**
      @brief Unsets static initializations.
-
-     @param trainBridge is a persistent training handle.
-
-     @return implicit R_NilValue.
    */
-  static SEXP deInit(struct TrainBridge* trainBridge);
-  
-
-  /**
-     @brief Pins frame vectors locally and passes through to TrainRf method.
-
-     @param argList is the front-end argument list.
-
-     @return list of trained forest objects.
-   */
-  static List train(const List& lRLEFrame,
-		    const List& lSampler,
-		    const List& argList);
+  static void deInit();
 
 
   /**
-     @brief Static entry into training.
+     @brief Static entry into training of independent trees.
 
      @param argList is the user-supplied argument list.
 
      @return R-style list of trained summaries.
    */
-  static List train(const List& argList,
-		    unique_ptr<struct SamplerBridge> sb,
-                    const struct RLEFrame* rleFrame);
+  static List trainInd(const List& lRLEFrame,
+		       const List& lSampler,
+		       const List& argList);
 
-  
+
   /**
      @brief Consumes core representation of a trained tree for writing.
 
@@ -126,9 +114,9 @@ struct TrainRf {
      @param scale guesstimates a reallocation size.
    */
   void consume(const struct ForestBridge& fb,
-	       const struct LeafBridge* lb,
+	       const struct LeafBridge& lb,
                unsigned int tIdx,
-               unsigned int chunkSize) const;
+               unsigned int chunkSize);
 
 
   /**
@@ -142,10 +130,16 @@ struct TrainRf {
 
      @param trainBridge contains trained summary from core.
 
+     @param lDeframe is the R deframed training data.
+
+     @param lSampler is the R sampler.
+
      @return the summary.
    */
-  List summarize(const TrainBridge* trainBridge,
-		 const vector<string>& diag) const;
+  List summarize(const TrainBridge& trainBridge,
+		 const List& lDeframe,
+		 const List& lSampler,
+		 const vector<string>& diag);
 
   
 private:

@@ -1,33 +1,33 @@
-# Copyright (C)  2012-2022   Mark Seligman
+# Copyright (C)  2012-2023   Mark Seligman
 ##
-## This file is part of ArboristR.
+## This file is part of Rborist.
 ##
-## ArboristR is free software: you can redistribute it and/or modify it
+## Rborist is free software: you can redistribute it and/or modify it
 ## under the terms of the GNU General Public License as published by
 ## the Free Software Foundation, either version 2 of the License, or
 ## (at your option) any later version.
 ##
-## ArboristR is distributed in the hope that it will be useful, but
+## Rborist is distributed in the hope that it will be useful, but
 ## WITHOUT ANY WARRANTY; without even the implied warranty of
 ## MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 ## GNU General Public License for more details.
 ##
 ## You should have received a copy of the GNU General Public License
-## along with ArboristR.  If not, see <http://www.gnu.org/licenses/>.
+## along with Rborist.  If not, see <http://www.gnu.org/licenses/>.
 
 "predict.rfArb" <- function(object,
                             newdata,
                             yTest=NULL,
+                            keyedFrame = FALSE,
                             quantVec = NULL,
                             quantiles = !is.null(quantVec),
                             ctgCensus = "votes",
+                            indexing = FALSE,
                             trapUnobserved = FALSE,
                             bagging = FALSE,
                             nThread = 0,
                             verbose = FALSE,
                               ...) {
-  if (!inherits(object, "rfArb"))
-    stop("object not of class rfArb")
   forest <- object$forest
   if (is.null(forest))
     stop("Forest state needed for prediction")
@@ -48,10 +48,11 @@
       impPermute = 0,
       ctgProb = ctgProbabilities(object$sampler, ctgCensus),
       quantVec = getQuantiles(quantiles, object$sampler, quantVec),
+      indexing = indexing,
       trapUnobserved = trapUnobserved,
       nThread = nThread,
       verbose = verbose)
-  summaryPredict <- predictCommon(object, object$sampler, newdata, yTest, argPredict)
+  summaryPredict <- predictCommon(object, object$sampler, newdata, yTest, keyedFrame, argPredict)
 
   if (!is.null(yTest)) { # Validation (test) included.
       c(summaryPredict$prediction, summaryPredict$validation)
@@ -96,7 +97,7 @@ getQuantiles <- function(quantiles, sampler, quantVec) {
 
 
 # Glue-layer entry for prediction.
-predictCommon <- function(objTrain, sampler, newdata, yTest, argList) {
-    deframeNew <- deframe(newdata, objTrain$signature)
+predictCommon <- function(objTrain, sampler, newdata, yTest, keyedFrame, argList) {
+    deframeNew <- deframe(newdata, objTrain$signature, keyedFrame)
     tryCatch(.Call("predictRcpp", deframeNew, objTrain, sampler, yTest, argList), error = function(e) {stop(e)})
 }

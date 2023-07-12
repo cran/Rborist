@@ -33,15 +33,32 @@ ForestBridge::ForestBridge(unsigned int nTree,
 			   const double score[],
 			   const double facExtent[],
                            const unsigned char facSplit[],
-			   const unsigned char facObserved[]) {
-  forest = make_unique<Forest>(DecNodeRW::unpackNodes(treeNode, nodeExtent, nTree),
-			       DecNodeRW::unpackScores(score, nodeExtent, nTree),
-			       DecNodeRW::unpackBits(facSplit, facExtent, nTree),
-			       DecNodeRW::unpackBits(facObserved, facExtent, nTree));
+			   const unsigned char facObserved[],
+			   unsigned int nPredStandalone) :
+  forest(make_unique<Forest>(DecNodeRW::unpackNodes(treeNode, nodeExtent, nTree),
+			     DecNodeRW::unpackScores(score, nodeExtent, nTree),
+			     DecNodeRW::unpackBits(facSplit, facExtent, nTree),
+			     DecNodeRW::unpackBits(facObserved, facExtent, nTree))) {
+  if (nPredStandalone != 0)
+    init(nPredStandalone);
 }
 
 
-ForestBridge::~ForestBridge() {
+ForestBridge::ForestBridge(ForestBridge&& fb) :
+  forest(std::exchange(fb.forest, nullptr)) {
+}
+
+
+ForestBridge::~ForestBridge() = default;
+
+
+void ForestBridge::init(unsigned int nPred) {
+  Forest::init(nPred);
+}
+
+
+void ForestBridge::deInit() {
+  Forest::deInit();
 }
 
 
