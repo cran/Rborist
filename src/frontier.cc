@@ -19,12 +19,13 @@
 #include "indexset.h"
 #include "predictorframe.h"
 #include "sampledobs.h"
-#include "sampler.h"
-#include "train.h"
 #include "splitfrontier.h"
 #include "interlevel.h"
 #include "ompthread.h"
 #include "branchsense.h"
+#include "sampler.h"
+#include "grove.h"
+
 
 unsigned int Frontier::totLevels = 0;
 
@@ -33,24 +34,28 @@ void Frontier::immutables(unsigned int totLevels) {
 }
 
 
-void Frontier::deImmutables() {
+void Frontier::deInit() {
   totLevels = 0;
 }
 
 
 unique_ptr<PreTree> Frontier::oneTree(const PredictorFrame* frame,
-                                      const Sampler* sampler,
+				      const Grove* train,
+				      const Sampler* sampler,
 				      unsigned int tIdx) {
-  Frontier frontier(frame, sampler, tIdx);
-  return frontier.levels();
+  Frontier frontier(frame, train, sampler, tIdx);
+  SampleMap smNonTerm = frontier.produceRoot(frame);
+  return frontier.splitByLevel(smNonTerm);
 }
 
 
 Frontier::Frontier(const PredictorFrame* frame_,
+		   const Grove* grove,
 		   const Sampler* sampler,
 		   unsigned int tIdx) :
   frame(frame_),
-  sampledObs(sampler->rootSample(tIdx)),
+  scorer(grove->getNodeScorer()),
+  sampledObs(sampler->makeObs(tIdx)),
   bagCount(sampledObs->getBagCount()),
   nCtg(sampledObs->getNCtg()),
   interLevel(make_unique<InterLevel>(frame, sampledObs.get(), this)),
@@ -59,40 +64,53 @@ Frontier::Frontier(const PredictorFrame* frame_,
 }
 
 
-unique_ptr<PreTree> Frontier::levels() {
-  sampledObs->setRanks(frame);
-  smNonterm = SampleMap(bagCount);
+SampleMap Frontier::produceRoot(const PredictorFrame* frame) {
+  sampledObs->sampleRoot(frame, scorer);
+  pretree->offspring(0, true);
+  frontierNodes.emplace_back(sampledObs.get());
+
+  SampleMap smNonterm = SampleMap(bagCount);
   smNonterm.addNode(bagCount, 0);
   iota(smNonterm.sampleIndex.begin(), smNonterm.sampleIndex.end(), 0);
-  frontierNodes.emplace_back(sampledObs.get());
+
+  return smNonterm;
+}
+
+
+unique_ptr<PreTree> Frontier::splitByLevel(SampleMap& smNonterm) {
   while (!frontierNodes.empty()) {
-    smNonterm = splitDispatch();
-    vector<IndexSet> frontierNext = produce();
-    interLevel->overlap(frontierNodes, frontierNext, getNonterminalEnd());
+    smNonterm = splitDispatch(smNonterm);
+    vector<IndexSet> frontierNext = produceLevel();
+    interLevel->overlap(frontierNodes, frontierNext, smNonterm.getEndIdx());
     frontierNodes = std::move(frontierNext);
   }
-  pretree->setTerminals(std::move(smTerminal));
+  pretree->setTerminals(sampledObs.get(), std::move(smTerminal));
 
   return std::move(pretree);
 }
 
 
-SampleMap Frontier::splitDispatch() {
-  earlyExit(interLevel->getLevel());
+SampleMap Frontier::splitDispatch(const SampleMap& smNonterm) {
+  // The current frontier can be scored as soon as its nodes are in
+  // place.
+  scorer->frontierPreamble(this);
 
+  earlyExit(interLevel->getLevel());
   CandType cand = interLevel->repartition(this);
   splitFrontier = SplitFactoryT::factory(this);
+
   BranchSense branchSense(bagCount);
   splitFrontier->split(cand, branchSense);
-  SampleMap smNext = surveySplits();
 
+  SampleMap smNext = surveySplits();
   ObsFrontier* cellFrontier = interLevel->getFront();
 #pragma omp parallel default(shared) num_threads(OmpThread::nThread)
   {
 #pragma omp for schedule(dynamic, 1)
     for (OMPBound splitIdx = 0; splitIdx < frontierNodes.size(); splitIdx++) {
-      setScore(splitIdx);
-      cellFrontier->updateMap(getNode(splitIdx), branchSense, smNonterm, smTerminal, smNext);
+      IndexSet iSet(getNode(splitIdx));
+      cellFrontier->updateMap(iSet, branchSense, smNonterm, smTerminal, smNext);
+      pretree->setScore(iSet, scorer->score(smNonterm, iSet));
     }
   }
 
@@ -109,7 +127,7 @@ void Frontier::earlyExit(unsigned int level) {
 }
 
 
-vector<IndexSet> Frontier::produce() const {
+vector<IndexSet> Frontier::produceLevel() {
   vector<IndexSet> frontierNext;
   for (auto iSet : frontierNodes) {
     if (!iSet.isTerminal()) {
@@ -155,16 +173,6 @@ void Frontier::registerNonterminal(IndexSet& iSet, SampleMap& smNext) {
   iSet.setIdxNext(smNext.getNodeCount());
   smNext.addNode(iSet.getExtentSucc(true), iSet.getPTIdSucc(this, true));
   smNext.addNode(iSet.getExtentSucc(false), iSet.getPTIdSucc(this, false));
-}
-
-
-IndexT Frontier::getNonterminalEnd() const {
-  return smNonterm.getEndIdx();
-}
-
-
-void Frontier::setScore(IndexT splitIdx) const {
-  pretree->setScore(splitFrontier.get(), frontierNodes[splitIdx]);
 }
 
 

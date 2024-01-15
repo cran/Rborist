@@ -1,4 +1,4 @@
-// Copyright (C)  2012-2023  Mark Seligman
+// Copyright (C)  2012-2024  Mark Seligman
 //
 // This file is part of RboristBase.
 //
@@ -26,22 +26,21 @@
 #include "forestWeightR.h"
 #include "predictbridge.h"
 #include "samplerR.h"
-#include "leafR.h"
+#include "predictR.h"
 #include "forestR.h"
 #include "forestbridge.h"
 #include "samplerbridge.h"
-#include "leafbridge.h"
+#include "trainR.h"
 
 #include <memory>
 #include <algorithm>
 
 
+// [[Rcpp::export]]
 RcppExport SEXP forestWeightRcpp(const SEXP sTrain,
 				 const SEXP sSampler,
 				 const SEXP sPredict,
 				 const SEXP sArgs) {
-  BEGIN_RCPP
-
   List lArgs(sArgs);
   bool verbose = as<bool>(lArgs["verbose"]);
   if (verbose)
@@ -54,27 +53,22 @@ RcppExport SEXP forestWeightRcpp(const SEXP sTrain,
     Rcout << "Weighting completed" << endl;
   
   return summary;
-  END_RCPP
 }
 
 
+// [[Rcpp::export]]
 NumericMatrix ForestWeightR::forestWeight(const List& lTrain,
 					  const List& lSampler,
 					  const NumericMatrix& indices,
 					  const List& lArgs) {
-  BEGIN_RCPP
-
+  PredictBridge::initOmp(as<unsigned>(lArgs[PredictR::strNThread]));
+  ForestBridge::init(as<IntegerVector>(lTrain[TrainR::strPredMap]).length());
   SamplerBridge samplerBridge(SamplerR::unwrapGeneric(lSampler));
-  LeafBridge leafBridge(LeafR::unwrap(lTrain, samplerBridge));
   return transpose(NumericMatrix(SamplerR::countObservations(lSampler),
 				 indices.nrow(),
-				 PredictBridge::forestWeight(ForestR::unwrap(lTrain),
+				 PredictBridge::forestWeight(ForestR::unwrap(lTrain, samplerBridge),
 							     samplerBridge,
-							     leafBridge,
 							     indices.begin(),
-							     indices.nrow(),
-							     as<unsigned int>(lArgs["nThread"])).begin()));
+							     indices.nrow()).begin()));
   ForestBridge::deInit();
-  
-  END_RCPP
 }

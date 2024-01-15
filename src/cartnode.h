@@ -20,6 +20,11 @@
 #include "treenode.h"
 
 
+struct CartNode;
+class DecTree;
+class PredictFrame;
+
+
 /**
    @brief To replace parallel array access.
  */
@@ -32,15 +37,14 @@ struct CartNode : public TreeNode {
   }
 
 
- CartNode(complex<double> pair) :
-  TreeNode(pair) {
+  CartNode(complex<double> pair) :
+    TreeNode(pair) {
   }
-  
 
   /**
      @return pretree index of true branch target.
    */
-  inline IndexT getIdTrue(IndexT ptId) const {
+  IndexT getIdTrue(IndexT ptId) const {
     return isNonterminal() ? ptId + getDelIdx() : 0;
   }
   
@@ -48,38 +52,30 @@ struct CartNode : public TreeNode {
   /**
      @return pretree index of false branch target.
    */
-  inline IndexT getIdFalse(IndexT ptId) const {
+  IndexT getIdFalse(IndexT ptId) const {
     return isNonterminal() ? ptId + getDelIdx() + 1 : 0;
   }
 
+  
+  /**
+     @brief Dispatches branching test method by predictor type.
+     
+     Substituting dispatch with a preinitialized function pointer is
+     more elegant, but markedly slower.
+     
+     @return branch delta; zero iff trapped exit or terminal.
+   */
+  IndexT advance(const PredictFrame* frame,
+		 const DecTree* decTree,
+		 size_t obsIdx) const;
+
 
   /**
-     @brief Advancers pass through to the base class.
+     @brief As above, but traps unobserved frame values.
    */
-  inline IndexT advance(const double* rowT,
-			bool trapUnobserved) const {
-    return isTerminal() ? 0 : TreeNode::advanceNum(rowT[getPredIdx()], trapUnobserved);
-  }
-
-
-  inline IndexT advance(const vector<unique_ptr<class BV>>& factorBits,
-			const vector<unique_ptr<class BV>>& bitsObserved,
-			const CtgT* rowT,
-			unsigned int tIdx,
-			bool trapUnobserved) const {
-    return isTerminal() ? 0 : TreeNode::advanceFactor(factorBits, bitsObserved, rowT, tIdx, trapUnobserved);
-  }
-
-
-  inline IndexT advance(const class Predict* predict,
-			const vector<unique_ptr<class BV>>& factorBits,
-			const vector<unique_ptr<class BV>>& bitsObserved,
-			const CtgT* rowFT,
-			const double *rowNT,
-			unsigned int tIdx,
-			bool trapUnobserved) const {
-    return isTerminal() ? 0 : TreeNode::advanceMixed(predict, factorBits, bitsObserved, rowFT, rowNT, tIdx, trapUnobserved);
-  }
+  IndexT advanceTrap(const PredictFrame* frame,
+		     const DecTree* decTree,
+		     size_t obsIdx) const;
 };
 
 #endif

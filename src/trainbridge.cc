@@ -12,20 +12,13 @@
 
    @author Mark Seligman
 */
-
-#include "forestbridge.h"
 #include "trainbridge.h"
-#include "samplerbridge.h"
-#include "leafbridge.h"
-
-#include "response.h"
-#include "train.h"
-#include "rftrain.h"
+#include "fetrain.h"
 #include "predictorframe.h"
 #include "coproc.h"
 
 TrainBridge::TrainBridge(unique_ptr<RLEFrame> rleFrame, double autoCompress, bool enableCoproc, vector<string>& diag) : frame(make_unique<PredictorFrame>(std::move(rleFrame), autoCompress, enableCoproc, diag)) {
-  ForestBridge::init(frame->getNPred());
+  init(frame->getNPred());
 }
 
 
@@ -38,39 +31,66 @@ vector<PredictorT> TrainBridge::getPredMap() const {
 }
 
 
-unique_ptr<TrainedChunk> TrainBridge::train(const ForestBridge& forestBridge,
-					    const SamplerBridge& samplerBridge,
-					    unsigned int treeOff,
-					    unsigned int treeChunk,
-					    const LeafBridge& leafBridge) const {
-  auto trained = Train::train(frame.get(),
-			      samplerBridge.getSampler(),
-			      forestBridge.getForest(),
-			      IndexRange(treeOff, treeChunk),
-			      leafBridge.getLeaf());
-
-  return make_unique<TrainedChunk>(std::move(trained));
+void TrainBridge::init(unsigned int nPred) {
+  FETrain::initDecNode(nPred);
 }
 
 
-void TrainBridge::initBlock(unsigned int trainBlock) {
-  Train::initBlock(trainBlock);
+void TrainBridge::initGrove(bool thinLeaves,
+			    unsigned int trainBlock) {
+  FETrain::initGrove(thinLeaves, trainBlock);
 }
 
 
 void TrainBridge::initProb(unsigned int predFixed,
                            const vector<double> &predProb) {
-  RfTrain::initProb(predFixed, predProb);
+  FETrain::initProb(predFixed, predProb);
 }
 
 
 void TrainBridge::initTree(size_t leafMax) {
-  RfTrain::initTree(leafMax);
+  FETrain::initTree(leafMax);
+}
+
+
+void TrainBridge::initSamples(vector<double> obsWeight) {
+  FETrain::initSamples(std::move(obsWeight));
+}
+
+
+void TrainBridge::initCtg(vector<double> classWeight) {
+  FETrain::initCtg(std::move(classWeight));
+}
+
+
+void TrainBridge::initBooster(const string& loss, const string& scorer) {
+  FETrain::initBooster(loss, scorer);
+}
+
+
+void TrainBridge::initBooster(const string& loss,
+			      const string& scorer,
+			      double nu,
+			      bool trackFit,
+			      unsigned int stopLag) {
+  FETrain::initBooster(loss, scorer, nu, trackFit, stopLag);
+}
+
+
+void TrainBridge::getScoreDesc(double& nu,
+			       double& baseScore,
+			       string& forestScorer) {
+  FETrain::listScoreDesc(nu, baseScore, forestScorer);
+}
+
+
+void TrainBridge::initNodeScorer(const string& scorer) {
+  FETrain::initNodeScorer(scorer);
 }
 
 
 void TrainBridge::initOmp(unsigned int nThread) {
-  RfTrain::initOmp(nThread);
+  FETrain::initOmp(nThread);
 }
 
 
@@ -78,29 +98,15 @@ void TrainBridge::initSplit(unsigned int minNode,
                             unsigned int totLevels,
                             double minRatio,
 			    const vector<double>& feSplitQuant) {
-  RfTrain::initSplit(minNode, totLevels, minRatio, feSplitQuant);
+  FETrain::initSplit(minNode, totLevels, minRatio, feSplitQuant);
 }
   
 
 void TrainBridge::initMono(const vector<double> &regMono) {
-  RfTrain::initMono(frame.get(), regMono);
+  FETrain::initMono(frame.get(), regMono);
 }
 
 
 void TrainBridge::deInit() {
-  ForestBridge::deInit();
-  RfTrain::deInit();
-  Train::deInit();
-}
-
-
-TrainedChunk::TrainedChunk(unique_ptr<Train> train_) : train(std::move(train_)) {
-}
-
-
-TrainedChunk::~TrainedChunk() = default;
-
-
-const vector<double>& TrainedChunk::getPredInfo() const {
-  return train->getPredInfo();
+  FETrain::deInit();
 }

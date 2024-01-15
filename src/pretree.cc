@@ -12,14 +12,16 @@
 
    @author Mark Seligman
  */
-#include "train.h"
+#include "grove.h"
+#include "forest.h"
 #include "predictorframe.h"
-#include "indexset.h"
+#include "frontier.h"
 #include "leaf.h"
 #include "samplemap.h"
 #include "bv.h"
 #include "splitfrontier.h"
 #include "pretree.h"
+#include "booster.h"
 
 #include <queue>
 #include <vector>
@@ -29,12 +31,11 @@ IndexT PreTree::leafMax = 0;
 
 PreTree::PreTree(const PredictorFrame* frame,
 		 IndexT bagCount) :
-  leafCount(0),
-  infoLocal(vector<double>(frame->getNPred())),
   splitBits(BV(bagCount * frame->getFactorExtent())), // Vague estimate.
   observedBits(BV(bagCount * frame->getFactorExtent())),
-  bitEnd(0) {
-  offspring(0, true);
+  bitEnd(0),
+  leafCount(0),
+  infoLocal(vector<double>(frame->getNPred())) {
 }
 
 
@@ -108,27 +109,23 @@ void PreTree::critCut(const SplitFrontier* sf,
 }
 
 
-void PreTree::setScore(const SplitFrontier* splitFrontier,
-		       const IndexSet& iSet) {
-  scores[iSet.getPTId()] = splitFrontier->getScore(iSet);
+void PreTree::setScore(const IndexSet& iSet,
+		       double score) {
+  scores[iSet.getPTId()] = score;
 }
 
 
-void PreTree::consume(Train* train,
-		      Forest* forest,
-		      Leaf* leaf) const {
-  train->consumeInfo(infoLocal);
-  
-  forest->consumeTree(nodeVec, scores);
-  forest->consumeBits(splitBits, observedBits, bitEnd);
-
-  leaf->consumeTerminals(this, terminalMap);
+void PreTree::consume(Grove* grove) const {
+  grove->consumeTree(nodeVec, scores);
+  grove->consumeBits(splitBits, observedBits, bitEnd);
+  grove->consumeInfo(infoLocal);
 }
 
 
-void PreTree::setTerminals(SampleMap smTerminal) {
+void PreTree::setTerminals(const SampledObs* sampledObs,
+			   SampleMap smTerminal) {
   terminalMap = std::move(smTerminal);
-
+  Booster::updateEstimate(sampledObs, this, terminalMap);
   leafMerge();
   setLeafIndices();
 }
@@ -177,7 +174,7 @@ void PreTree::leafMerge() {
       infoQueue.emplace(mergeNode[ptId]);
     }
   }
-  //cout << infoQueue.size() << " nonterminals in queue + " << leafCount << " leaves out of " << height << endl;
+
   
   vector<IndexT> ptMerged(height);
   iota(ptMerged.begin(), ptMerged.end(), 0);

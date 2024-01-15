@@ -8,39 +8,38 @@
 /**
    @file response.h
 
-   @brief Class definitions for crescent leaf structures.
+   @brief Scoring methods parametrized by response type.
 
    @author Mark Seligman
  */
 
-#ifndef FOREST_RESPONSE_H
-#define FOREST_RESPONSE_H
+#ifndef OBS_RESPONSE_H
+#define OBS_RESPONSE_H
 
 
 #include "typeparam.h"
-
 
 #include <vector>
 #include <numeric>
 #include <algorithm>
 
-
 /**
-   @brief Class definitions specialized for response type.
+   @brief Abstract wrapper class.  Probably unnecessary.
  */
 struct Response {
-
-  /**
-     @brief Crescent constructor.
-  */
   Response() = default;
 
   virtual ~Response() {}
 
 
   virtual PredictorT getNCtg() const = 0;
+
   
-  
+  /**
+     @brief Temporary workaround for singleton base score in Scorer.
+   */
+  virtual double getDefaultPrediction() const = 0;
+
   /**
      @base Copies front-end vectors and lights off initializations specific to classification.
 
@@ -49,38 +48,24 @@ struct Response {
      @return void.
   */
   static unique_ptr<class ResponseCtg> factoryCtg(const vector<unsigned int>& yCtg,
-					      PredictorT nCtg,
-					      const vector<double>& classWeight);
+						  PredictorT nCtg);
 
-  
-  static unique_ptr<class ResponseCtg> factoryCtg(const vector<unsigned int>& yCtg,
-					      PredictorT nCtg);
 
-  
   static unique_ptr<class ResponseReg> factoryReg(const vector<double>& yNum);
 
   
   /**
-     @brief Samples (bags) the response to construct the tree root.
+     @brief Samples (bags) the estimand to construct the tree root.
    */
-  virtual unique_ptr<class SampledObs> rootSample(const class Sampler* sampler,
-						  unsigned int tIdx) const = 0;
+  virtual unique_ptr<class SampledObs> getObs(const class Sampler* sampler,
+					      unsigned int tIdx) const = 0;
 };
 
 
 class ResponseReg : public Response {
-  const vector<double> yTrain; // Training response.
+  const vector<double> yTrain; ///< Training response.
 
-  const double defaultPrediction; // Prediction value when no trees bagged.
-   
-  /**
-     @brief Determines mean training value.
-
-     @return mean trainig value.
-   */
-  double meanTrain() const {
-    return yTrain.empty() ? 0.0 : accumulate(yTrain.begin(), yTrain.end(), 0.0) / yTrain.size();
-  }
+  const double defaultPrediction; ///< Prediction value when no trees bagged.
 
 
 public:
@@ -94,11 +79,17 @@ public:
 
   ~ResponseReg() = default;
 
-
+  
   PredictorT getNCtg() const {
     return 0;
   }
-  
+
+
+  /**
+     @brief Temporary workaround.
+   */
+  double getDefaultPrediction() const;
+
 
   const vector<double>& getYTrain() const {
     return yTrain;
@@ -106,19 +97,22 @@ public:
   
 
   /**
+     @brief Determines mean training value.
+
+     @return mean training value.
+   */
+  double mean() const {
+    return yTrain.empty() ? 0.0 : accumulate(yTrain.begin(), yTrain.end(), 0.0) / yTrain.size();
+  }
+
+
+  /**
      @brief Samples response of current tree.
 
      @return summary of sampled response.
    */
-  unique_ptr<class SampledObs> rootSample(const class Sampler* sampler,
-					  unsigned int tIdx) const;
-
-  
-  /**
-     @brief Derives a prediction value for an observation.
-   */
-  double predictObs(const class Predict* predict,
-		    size_t row) const;
+  unique_ptr<class SampledObs> getObs(const class Sampler* sampler,
+				      unsigned int tIdx) const;
 };
 
 
@@ -126,10 +120,9 @@ public:
    @brief Training members and methods for categorical response.
  */
 class ResponseCtg : public Response {
-  const vector<PredictorT> yCtg; // 0-based factor-valued response.
+  const vector<PredictorT> yCtg; ///< 0-based factor-valued response.
   const PredictorT nCtg;
-  const vector<double> classWeight; // Category weights:  cresecent only.
-  const PredictorT defaultPrediction; // Default prediction when nothing is out-of-bag.
+  const PredictorT defaultPrediction; ///< Default prediction when nothing is out-of-bag.
 
 
   /**
@@ -139,25 +132,20 @@ class ResponseCtg : public Response {
 
 
 public:
-  /**
-     @breif Training constructor:  class weights needed.
-   */
-  ResponseCtg(const vector<PredictorT>& yCtg_,
-	  PredictorT nCtg,
-	  const vector<double>& classWeight);
 
-
-  /**
-     @brief Post-training constructor.
-   */
   ResponseCtg(const vector<PredictorT>& yCtg_,
-	  PredictorT nCtg);
+	      PredictorT nCtg);
 
 
   ~ResponseCtg() = default;
 
+  
+  const vector<unsigned int>& getYCtg() const {
+    return yCtg;
+  }
 
-  inline auto getCtg(IndexT row) const {
+  
+  auto getCtg(IndexT row) const {
     return yCtg[row];
   }
 
@@ -165,30 +153,26 @@ public:
   PredictorT getNCtg() const {
     return nCtg;
   }
+
+
+  /**
+   */
+  double getDefaultPrediction() const;
   
 
   /**
-     @brief Samples response of current tree.
+     @brief Samples training response of current tree.
 
      @return summary of sampled response.
    */
-  unique_ptr<class SampledObs> rootSample(const class Sampler* sampler,
-					  unsigned int tIdx) const;
-
-  
-  PredictorT predictObs(const class Predict* predict,
-			size_t row,
-			unsigned int* census) const;
-  
-  
-  PredictorT argMaxJitter(const unsigned int* census,
-			  const vector<double>& ctgJitter) const;
+  unique_ptr<class SampledObs> getObs(const class Sampler* sampler,
+				      unsigned int tIdx) const;
 
 
   /**
      @brief Constructs a vector of default probabilities.
   */
-  vector<double> defaultProb() const;
+  vector<double> ctgProb() const;
 };
 
 #endif

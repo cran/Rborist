@@ -1,4 +1,4 @@
-// Copyright (C)  2012-2023   Mark Seligman
+// Copyright (C)  2012-2024  Mark Seligman
 //
 // This file is part of RboristBase.
 //
@@ -25,8 +25,12 @@
 
 #include "resizeR.h"
 #include "forestR.h"
+#include "grovebridge.h"
 #include "forestbridge.h"
+#include "trainbridge.h"
 #include "trainR.h"
+#include "samplerR.h"
+#include "leafR.h"
 
 
 const string FBTrain::strNTree = "nTree";
@@ -37,6 +41,11 @@ const string FBTrain::strScores= "scores";
 const string FBTrain::strFactor = "factor";
 const string FBTrain::strFacSplit = "facSplit";
 const string FBTrain::strObserved = "observed";
+
+const string FBTrain::strScoreDesc = "scoreDesc";
+const string FBTrain::strNu = "nu";
+const string FBTrain::strBaseScore = "baseScore";
+const string FBTrain::strForestScorer = "scorer";
 
 
 FBTrain::FBTrain(unsigned int nTree_) :
@@ -50,82 +59,86 @@ FBTrain::FBTrain(unsigned int nTree_) :
 }
 
 
-void FBTrain::bridgeConsume(const ForestBridge& bridge,
-			    unsigned int tIdx,
-			    double scale) {
-  nodeConsume(bridge, tIdx, scale);
-  factorConsume(bridge, tIdx, scale);
+void FBTrain::groveConsume(const GroveBridge* grove,
+			   unsigned int tIdx,
+			   double scale) {
+  nodeConsume(grove, tIdx, scale);
+  factorConsume(grove, tIdx, scale);
 }
 
 
-void FBTrain::nodeConsume(const ForestBridge& bridge,
+void FBTrain::nodeConsume(const GroveBridge* bridge,
 			  unsigned int tIdx,
 			  double scale) {
-  const vector<size_t>&nExtents = bridge.getNodeExtents();
+  const vector<size_t>&nExtents = bridge->getNodeExtents();
   unsigned int fromIdx = 0;
   for (unsigned int toIdx = tIdx; toIdx < tIdx + nExtents.size(); toIdx++) {
     nodeExtent[toIdx] = nExtents[fromIdx++];
   }
 
-  size_t nodeCount = bridge.getNodeCount();
+  size_t nodeCount = bridge->getNodeCount();
   if (nodeTop + nodeCount > static_cast<size_t>(cNode.length())) {
     cNode = std::move(ResizeR::resize<ComplexVector>(cNode, nodeTop, nodeCount, scale));
     scores = std::move(ResizeR::resize<NumericVector>(scores, nodeTop, nodeCount, scale));
   }
-  bridge.dumpTree((complex<double>*)&cNode[nodeTop]);
-  bridge.dumpScore(&scores[nodeTop]);
+  bridge->dumpTree((complex<double>*)&cNode[nodeTop]);
+  bridge->dumpScore(&scores[nodeTop]);
   nodeTop += nodeCount;
 }
 
 
-void FBTrain::factorConsume(const ForestBridge& bridge,
+void FBTrain::factorConsume(const GroveBridge* bridge,
 			    unsigned int tIdx,
 			    double scale) {
-  const vector<size_t>& fExtents = bridge.getFacExtents();
+  const vector<size_t>& fExtents = bridge->getFacExtents();
   unsigned int fromIdx = 0;
   for (unsigned int toIdx = tIdx; toIdx < tIdx + fExtents.size(); toIdx++) {
     facExtent[toIdx] = fExtents[fromIdx++];
   }
  
-  size_t facBytes = bridge.getFactorBytes();
+  size_t facBytes = bridge->getFactorBytes();
   if (facTop + facBytes > static_cast<size_t>(facRaw.length())) {
     facRaw = std::move(ResizeR::resize<RawVector>(facRaw, facTop, facBytes, scale));
     facObserved = std::move(ResizeR::resize<RawVector>(facObserved, facTop, facBytes, scale));
   }
-  bridge.dumpFactorRaw(&facRaw[facTop]);
-  bridge.dumpFactorObserved(&facObserved[facTop]);
+  bridge->dumpFactorRaw(&facRaw[facTop]);
+  bridge->dumpFactorObserved(&facObserved[facTop]);
   facTop += facBytes;
 }
 
 
+void FBTrain::scoreDescConsume(const TrainBridge& trainBridge) {
+  trainBridge.getScoreDesc(nu, baseScore, forestScorer);
+}
+
+
+// [[Rcpp::export]]
 List FBTrain::wrapNode() {
-  BEGIN_RCPP
   List wrappedNode = List::create(_[strTreeNode] = std::move(cNode),
 				  _[strExtent] = std::move(nodeExtent)
 				  );
   wrappedNode.attr("class") = "Node";
   return wrappedNode;
-  END_RCPP
 }
 
 
+// [[Rcpp::export]]
 List FBTrain::wrapFactor() {
-  BEGIN_RCPP
-    List wrappedFactor = List::create(_[strFacSplit] = std::move(facRaw),
+  List wrappedFactor = List::create(_[strFacSplit] = std::move(facRaw),
 				      _[strExtent] = std::move(facExtent),
 				      _[strObserved] = std::move(facObserved)
 				      );
   wrappedFactor.attr("class") = "Factor";
 
   return wrappedFactor;
-  END_RCPP
 }
 
 
+// [[Rcpp::export]]
 List FBTrain::wrap() {
-  BEGIN_RCPP
   List forest =
     List::create(_[strNTree] = nTree,
+		 _[strScoreDesc] = std::move(summarizeScoreDesc()),
 		 _[strNode] = std::move(wrapNode()),
 		 _[strScores] = std::move(scores),
 		 _[strFactor] = std::move(wrapFactor())
@@ -137,11 +150,20 @@ List FBTrain::wrap() {
   forest.attr("class") = "Forest";
 
   return forest;
-  END_RCPP
 }
 
 
-ForestBridge ForestR::unwrap(const List& lTrain) {
+List FBTrain::summarizeScoreDesc() {
+  return List::create(
+		      _[strNu] = nu,
+		      _[strBaseScore] = baseScore,
+		      _[strForestScorer] = forestScorer
+		      );
+}
+
+
+ForestBridge ForestR::unwrap(const List& lTrain,
+			     bool categorical) {
   List lForest(checkForest(lTrain));
   List lNode((SEXP) lForest[FBTrain::strNode]);
   List lFactor((SEXP) lForest[FBTrain::strFactor]);
@@ -152,20 +174,56 @@ ForestBridge ForestR::unwrap(const List& lTrain) {
 		      as<NumericVector>(lFactor[FBTrain::strExtent]).begin(),
 		      as<RawVector>(lFactor[FBTrain::strFacSplit]).begin(),
 		      as<RawVector>(lFactor[FBTrain::strObserved]).begin(),
-		      as<IntegerVector>(lTrain[TrainR::strPredMap]).length());
+		      unwrapScoreDesc(lForest, categorical),
+		      nullptr);
 }
 
 
-List ForestR::checkForest(const List& lTrain) {
-  BEGIN_RCPP
+ForestBridge ForestR::unwrap(const List& lTrain,
+			     const SamplerBridge& samplerBridge) {
+  List lForest(checkForest(lTrain));
+  List lNode((SEXP) lForest[FBTrain::strNode]);
+  List lFactor((SEXP) lForest[FBTrain::strFactor]);
+  List lLeaf((SEXP) lTrain[TrainR::strLeaf]);
+  bool emptyLeaf = (Rf_isNull(lLeaf[LeafR::strIndex]) || Rf_isNull(lLeaf[LeafR::strExtent]));
+  bool thinLeaf = emptyLeaf || as<NumericVector>(lLeaf[LeafR::strExtent]).length() == 0;
+  return ForestBridge(as<unsigned int>(lForest[FBTrain::strNTree]),
+		      as<NumericVector>(lNode[FBTrain::strExtent]).begin(),
+		      (complex<double>*) as<ComplexVector>(lNode[FBTrain::strTreeNode]).begin(),
+		      as<NumericVector>(lForest[FBTrain::strScores]).begin(),
+		      as<NumericVector>(lFactor[FBTrain::strExtent]).begin(),
+		      as<RawVector>(lFactor[FBTrain::strFacSplit]).begin(),
+		      as<RawVector>(lFactor[FBTrain::strObserved]).begin(),
+		      unwrapScoreDesc(lForest, samplerBridge.categorical()),
+		      &samplerBridge,
+		      thinLeaf ? nullptr : as<NumericVector>(lLeaf[LeafR::strExtent]).begin(),
+		      thinLeaf ? nullptr : as<NumericVector>(lLeaf[LeafR::strIndex]).begin());
+}
 
+
+tuple<double, double, string> ForestR::unwrapScoreDesc(const List& lForest,
+						       bool categorical) {
+  // Legacy RF implementations did not record a score descriptor,
+  // so one is created on-the-fly:
+  if (!lForest.containsElementNamed("scoreDesc")) {
+    if (categorical)
+      return make_tuple<double, double, string>(0.0, 0.0, "plurality");
+    else
+      return make_tuple<double, double, string>(0.0, 0.0, "mean");
+  }
+  
+  List lScoreDesc(as<List>(lForest[FBTrain::strScoreDesc]));
+  return make_tuple<double, double>(as<double>(lScoreDesc[FBTrain::strNu]), as<double>(lScoreDesc[FBTrain::strBaseScore]), as<string>(lScoreDesc[FBTrain::strForestScorer]));
+}
+
+
+// [[Rcpp::export]]
+List ForestR::checkForest(const List& lTrain) {
   List lForest((SEXP) lTrain["forest"]);
   if (!lForest.inherits("Forest")) {
     stop("Expecting Forest");
   }
   return lForest;
-  
-  END_RCPP
 }
 
 
@@ -178,12 +236,15 @@ ForestExpand ForestExpand::unwrap(const List& lTrain,
 
 ForestExpand::ForestExpand(const List &lTrain,
                            const IntegerVector& predMap) {
+  // Leaving legacy categorical flag turned off:  not quite correct.
   ForestBridge forestBridge = ForestR::unwrap(lTrain);
+
   predTree = vector<vector<unsigned int>>(forestBridge.getNTree());
   bumpTree = vector<vector<size_t> >(forestBridge.getNTree());
   splitTree = vector<vector<double > >(forestBridge.getNTree());
   facSplitTree = vector<vector<unsigned char> >(forestBridge.getNTree());
-  forestBridge.dump(predTree, splitTree, bumpTree, facSplitTree);
+  scoreTree = vector<vector<double>>(forestBridge.getNTree());
+  forestBridge.dump(predTree, splitTree, bumpTree, facSplitTree, scoreTree);
   predExport(predMap.begin());
 }
 
@@ -210,4 +271,42 @@ void ForestExpand::treeExport(const int predMap[],
       pred[i] = predMap[predCore];
     }
   }
+}
+
+
+// [[Rcpp::export]]
+List ForestExpand::expand(const List& lTrain,
+			  const IntegerVector& predMap) {
+  ForestExpand forest(ForestExpand::unwrap(lTrain, predMap));
+  unsigned int nTree = forest.predTree.size();
+  List trees(nTree);
+  for (unsigned int tIdx = 0; tIdx < nTree; tIdx++) {
+    List ffReg =
+      List::create(
+                   _["tree"] = expandTree(forest, tIdx)
+                   );
+    ffReg.attr("class") = "expandForest";
+    trees[tIdx] = std::move(ffReg);
+  }
+  return trees;
+}
+
+// [[Rcpp::export]]
+List ForestExpand::expandTree(const ForestExpand& forest,
+			 unsigned int tIdx) {
+  auto predTree(forest.getPredTree(tIdx));
+  auto bumpTree(forest.getBumpTree(tIdx));
+  IntegerVector incrL(bumpTree.begin(), bumpTree.end());
+  IntegerVector predIdx(predTree.begin(), predTree.end());
+  List ffTree = List::create(
+     _["pred"] = ifelse(incrL == 0, -(predIdx + 1), predIdx),
+     _["childL"] = incrL,
+     _["childR"] = ifelse(incrL == 0, 0, incrL + 1),
+     _["split"] = forest.getSplitTree(tIdx),
+     _["facSplit"] = forest.getFacSplitTree(tIdx),
+     _["score"] = forest.getScoreTree(tIdx)
+     );
+
+  ffTree.attr("class") = "expandTree";
+  return ffTree;
 }

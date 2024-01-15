@@ -1,4 +1,4 @@
-// This file is part of ArboristCore.
+// This file is part of ArboristBase.
 
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
@@ -19,108 +19,140 @@
 #include "sampledobs.h"
 #include "predictorframe.h"
 #include "ompthread.h"
+#include "nodescorer.h"
+#include "indexset.h"
+#include "booster.h"
 
 #include <numeric>
 
+vector<double> SampledObs::obsWeight = vector<double>(0);
+vector<double> SampledCtg::classWeight = vector<double>(0);
+
+
+void SampledObs::init(vector<double> obsWeight_) {
+  obsWeight = std::move(obsWeight_);
+}
+
+
+
+void SampledCtg::init(vector<double> classWeight_) {
+  classWeight = std::move(classWeight_);
+}
+
+
+void SampledObs::deInit() {
+  obsWeight = vector<double>(0);
+  SampledCtg::classWeight = vector<double>(0);
+}
+
+
 
 SampledObs::SampledObs(const Sampler* sampler,
-	       const Response* response,
-	       double (SampledObs::* adder_)(double, const SamplerNux&, PredictorT)) :
+		       unsigned int samplerIdx,
+		       double (SampledObs::* adder_)(double, const SamplerNux&, PredictorT)) :
   nSamp(sampler->getNSamp()),
+  nux(sampler->getSamples(samplerIdx)),
+  bagCount(nux.size() == 0 ? nSamp : nux.size()),
   adder(adder_),
-  ctgRoot(vector<SumCount>(response->getNCtg())),
-  row2Sample(vector<IndexT>(sampler->getNObs())),
-  bagSum(0.0) {
-}
-
-    
-unique_ptr<SampleCtg> SampledObs::factoryCtg(const Sampler* sampler,
-					     const Response* response,
-					     const vector<double>& y,
-					     const vector<PredictorT>& yCtg,
-					     unsigned int tIdx) {
-  unique_ptr<SampleCtg> sampleCtg = make_unique<SampleCtg>(sampler, response);
-  sampleCtg->bagSamples(sampler, yCtg, y, tIdx);
-
-  return sampleCtg;
+  bagSum(0.0),
+  obs2Sample(vector<IndexT>(sampler->getNObs())),
+  ctgRoot(vector<SumCount>(sampler->getNCtg())) {
 }
 
 
-unique_ptr<SampleReg> SampledObs::factoryReg(const Sampler* sampler,
-					     const Response* response,
-					     const vector<double>& y,
-					     unsigned int tIdx) {
-  unique_ptr<SampleReg> sampleReg = make_unique<SampleReg>(sampler, response);
-  sampleReg->bagSamples(sampler, y, tIdx);
-  return sampleReg;
+SampledObs::~SampledObs() = default;
+
+
+void SampledObs::sampleRoot(const PredictorFrame* frame,
+			    NodeScorer* scorer) {
+  sampleObservations(scorer);
+  setRanks(frame);
+  Booster::updateResidual(scorer, this, bagSum);
 }
 
 
-SampleReg::SampleReg(const Sampler* sampler,
-		     const Response* response) :
-  SampledObs(sampler, response, static_cast<double (SampledObs::*)(double, const SamplerNux&, PredictorT)>(&SampleReg::addNode)) {
+void SampledCtg::sampleObservations(NodeScorer* scorer) {
+  sampleObservations(scorer, response->getYCtg());
 }
 
 
-
-void SampleReg::bagSamples(const class Sampler* sampler,
-			   const vector<double>& y,
-			   unsigned int tIdx) {
-  vector<PredictorT> ctgProxy(row2Sample.size());
-  SampledObs::bagSamples(sampler, y, ctgProxy, tIdx);
+void SampledReg::sampleObservations(NodeScorer* scorer) {
+  sampleObservations(scorer, response->getYTrain());
 }
 
 
-SampleCtg::SampleCtg(const Sampler* sampler,
-		     const Response* response) :
-  SampledObs(sampler, response, static_cast<double (SampledObs::*)(double, const SamplerNux&, PredictorT)>(&SampleCtg::addNode)) {
+SampledReg::SampledReg(const Sampler* sampler,
+		       const ResponseReg* response_,
+		       unsigned int tIdx) :
+  SampledObs(sampler, tIdx, static_cast<double (SampledObs::*)(double, const SamplerNux&, PredictorT)>(&SampledReg::addNode)),
+  response(response_) {
+}
+
+
+SampledReg::~SampledReg() = default;
+
+
+void SampledReg::sampleObservations(NodeScorer* scorer,
+				    const vector<double>& y) {
+  vector<double> sampleScore;
+  IndexT obsIdx = 0;
+  for (const SamplerNux& nx : nux) {
+    obsIdx += nx.getDelRow();
+    sampleScore.push_back(y[obsIdx] * nx.getSCount());
+  }
+  scorer->setScores(std::move(sampleScore));
+  SampledObs::sampleObservations(y, vector<PredictorT>(y.size()));
+}
+
+
+void SampledCtg::sampleObservations(NodeScorer* scorer,
+				    const vector<PredictorT>& yCtg) {
+  double weightSum = accumulate(classWeight.begin(), classWeight.end(), 0.0);
+  vector<double> yWeight(yCtg.size());
+  transform(yCtg.begin(), yCtg.end(), &yWeight[0],
+	    [weightSum](PredictorT ctg) { return classWeight[ctg] / weightSum; });
+
+  SampledObs::sampleObservations(yWeight, yCtg);
+}
+
+
+SampledCtg::SampledCtg(const Sampler* sampler,
+		       const ResponseCtg* response_,
+		       unsigned int tIdx) :
+  SampledObs(sampler, tIdx, static_cast<double (SampledObs::*)(double, const SamplerNux&, PredictorT)>(&SampledCtg::addNode)),
+  response(response_) {
   SumCount scZero;
   fill(ctgRoot.begin(), ctgRoot.end(), scZero);
 }
 
-
-// Same as for regression case, but allocates and sets 'ctg' value, as well.
-// Full row count is used to avoid the need to rewalk.
-//
-void SampleCtg::bagSamples(const Sampler* sampler,
-			   const vector<PredictorT>& yCtg,
-			   const vector<double>& y,
-			   unsigned int tIdx) {
-  SampledObs::bagSamples(sampler, y, yCtg, tIdx);
-}
+SampledCtg::~SampledCtg() = default;
 
 
-void SampledObs::bagSamples(const Sampler* sampler,
-			    const vector<double>&  y,
-			    const vector<PredictorT>& yCtg,
-			    unsigned int tIdx) {
-  /*
-  if (!sampler->isBagging()) { // Wrong test.
+void SampledObs::sampleObservations(const vector<double>&  y,
+				    const vector<PredictorT>& yCtg) {
+  if (nux.empty()) {
     bagTrivial(y, yCtg);
     return;
   }
   else {
-  */
-  IndexT sIdx = 0;
-  IndexT row = 0;
-  bagCount = sampler->getExtent(tIdx);
-  fill(row2Sample.begin(), row2Sample.end(), bagCount);
-  for (SamplerNux nux : sampler->getSamples(tIdx)) {
-    row += nux.getDelRow();
-    bagSum += (this->*adder)(y[row], nux, yCtg[row]);
-    row2Sample[row] = sIdx++;
+    IndexT sIdx = 0;
+    IndexT obsIdx = 0;
+    fill(obs2Sample.begin(), obs2Sample.end(), bagCount);
+    for (const SamplerNux& nx : nux) {
+      obsIdx += nx.getDelRow();
+      bagSum += (this->*adder)(y[obsIdx] * (obsWeight.empty() ? 1 : obsWeight[obsIdx]), nx, yCtg[obsIdx]);
+      obs2Sample[obsIdx] = sIdx++;
+    }
   }
- //}
 }
 
 
 void SampledObs::bagTrivial(const vector<double>& y,
-			const vector<PredictorT>& yCtg) {
-  bagCount = row2Sample.size();
-  iota(row2Sample.begin(), row2Sample.end(), 0);
+			    const vector<PredictorT>& yCtg) {
+  iota(obs2Sample.begin(), obs2Sample.end(), 0);
   SamplerNux nux(1, 1);
-  for (IndexT row = 0; row < bagCount; row++) {
-    bagSum += (this->*adder)(y[row], nux, yCtg[row]);
+  for (IndexT obsIdx = 0; obsIdx < bagCount; obsIdx++) {
+    bagSum += (this->*adder)(y[obsIdx] * obsWeight[obsIdx], nux, yCtg[obsIdx]);
   }
 }
 
@@ -140,12 +172,12 @@ void SampledObs::setRanks(const PredictorFrame* layout) {
 
 vector<IndexT> SampledObs::sampleRanks(const PredictorFrame* layout, PredictorT predIdx) {
   vector<IndexT> sampledRanks(bagCount);
-  const vector<IndexT>& row2Rank = layout->getRanks(predIdx);
+  const vector<IndexT>& obs2Rank = layout->getRanks(predIdx);
   IndexT sIdx = 0;
-  vector<unsigned char> rankSeen(row2Rank.size());
-  for (IndexT row = 0; row != row2Rank.size(); row++) {
-    if (row2Sample[row] < bagCount) {
-      IndexT rank = row2Rank[row];
+  vector<unsigned char> rankSeen(obs2Rank.size());
+  for (IndexT row = 0; row != obs2Rank.size(); row++) {
+    if (obs2Sample[row] < bagCount) {
+      IndexT rank = obs2Rank[row];
       sampledRanks[sIdx++] = rank;
       rankSeen[rank] = 1;
     }

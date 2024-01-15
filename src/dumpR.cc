@@ -1,4 +1,4 @@
-// Copyright (C)  2019 - 2023   Mark Seligman
+// Copyright (C)  2019 - 2024   Mark Seligman
 //
 // This file is part of RboristBase.
 //
@@ -18,7 +18,7 @@
    @author Mark Seligman
  */
 
-#include "expandR.h"
+#include "trainR.h"
 #include "dumpR.h"
 #include "forestR.h"
 #include "forestbridge.h"
@@ -30,19 +30,18 @@
 
    @return RboristDump as List.
  */
-RcppExport SEXP Dump(SEXP sArbOut) {
-  BEGIN_RCPP
 
+// [[Rcpp::export]]
+RcppExport SEXP Dump(SEXP sArbOut) {
   DumpRf dumper(sArbOut);
   dumper.dumpTree();
 
   return StringVector(dumper.outStr.str());
-  END_RCPP
 }
 
 
 DumpRf::DumpRf(SEXP sArbOut) :
-  rfExport((SEXP) expandR(sArbOut)),
+  rfExport((SEXP) expandTrainRcpp(sArbOut)),
   treeOut((SEXP) rfExport["tree"]),
   predMap((SEXP) rfExport["predMap"]),
   forest(ForestExpand::unwrap(List(sArbOut), predMap)),

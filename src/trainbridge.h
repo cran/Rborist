@@ -14,44 +14,31 @@
  */
 
 
-#ifndef RF_BRIDGE_TRAINBRIDGE_H
-#define RF_BRIDGE_TRAINBRIDGE_H
+#ifndef FOREST_BRIDGE_TRAINBRIDGE_H
+#define FOREST_BRIDGE_TRAINBRIDGE_H
 
 #include<vector>
 #include<memory>
 
 using namespace std;
 
-
-
-struct TrainedChunk {
-  TrainedChunk(unique_ptr<class Train>);
-
-  ~TrainedChunk();
-  
-  
-  /**
-     @brief Getter for splitting information values.
-
-     @return reference to per-predictor information vector.
-   */
-  const vector<double>& getPredInfo() const;
-
-
-private:
-
-  const unique_ptr<class Train> train; ///< Core-level instantiation.
-};
-
+class PredictorFrame;
 
 struct TrainBridge {
   TrainBridge(unique_ptr<struct RLEFrame> rleFrame,
 	      double autoCompress,
 	      bool enableCoproc,
 	      vector<string>& diag);
+
   
   ~TrainBridge();
 
+
+  const PredictorFrame* getFrame() const {
+    return frame.get();
+  }
+
+  
   /**
      @brief Copies internal-to-external predictor map.
 
@@ -59,23 +46,21 @@ struct TrainBridge {
    */
   vector<unsigned int> getPredMap() const;
 
-  
   /**
-     @brief Main entry for training.
+     @brief Invokes DecNode's static initializer.
    */
-  unique_ptr<TrainedChunk> train(const struct ForestBridge& forest,
-				 const struct SamplerBridge& sampler,
-				 unsigned int treeOff,
-				 unsigned int treeChunk,
-				 const struct LeafBridge& leafBridge) const;
+  static void init(unsigned int nPred);
 
 
   /**
-     @brief Registers training tree-block count.
+     @brief Registers training parameters for a grove ot trees.
 
-     @param trainBlock_ is the number of trees by which to block.
+     @param thinLeaves is true iff leaf information elided.
+     
+     @param trainBlock is the number of trees by which to block.
   */
-  static void initBlock(unsigned int trainBlock);
+  static void initGrove(bool thinLeaves,
+			unsigned int trainBlock);
 
 
   static void initProb(unsigned int predFixed,
@@ -85,6 +70,41 @@ struct TrainBridge {
      @brief Registers tree-shape parameters.
   */
   static void initTree(size_t leafMax);
+
+
+  static void initSamples(vector<double> obsWeight);
+
+  
+  static void initCtg(vector<double> classWeight);
+
+  
+  /**
+     @brief Sets loss and scoring for independent forest.
+   */
+  static void initBooster(const string& loss,
+			  const string& scorer);
+
+  
+  /**
+     @brief Sets update for sequential forest,
+   */
+  static void initBooster(const string& loss,
+			  const string& scorer,
+			  double nu,
+			  bool trackFit,
+			  unsigned int stopLag);
+
+
+  /**
+     @brief Deconstructs contents of core object's ScoreDesc.
+   */
+  static void getScoreDesc(double& nu,
+			   double& baseScore,
+			   string& forestScorer);
+
+
+  static void initNodeScorer(const string& scorer);
+
 
   /**
      @brief Initializes static OMP thread state.
@@ -118,13 +138,14 @@ struct TrainBridge {
   */
   void initMono(const vector<double>& regMono);
 
+
   /**
      @brief Static de-initializer.
    */
   static void deInit();
 
 private:
-  unique_ptr<class PredictorFrame> frame;
+  unique_ptr<PredictorFrame> frame;
 };
 
 #endif

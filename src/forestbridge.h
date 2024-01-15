@@ -23,6 +23,10 @@
 
 using namespace std;
 
+struct SamplerBridge;
+class Forest;
+
+
 /**
    @brief Hides class Forest internals from bridge via forward declarations.
  */
@@ -34,8 +38,8 @@ struct ForestBridge {
      It is the responsibility of the front end and/or its bridge to ensure
      that aliased memory either remains live or is copied.
 
-     @param nodeExtent[] is the per-tree node count.
-
+     @param nTree is the number of tres.
+     
      @param treeNode caches the nodes as packed-integer / double pairs.
 
      @param nPred is the number of training predictors.
@@ -53,15 +57,29 @@ struct ForestBridge {
 	       const double facExtent[],
                const unsigned char facSplit[],
 	       const unsigned char facObserved[],
-	       unsigned int nPred);
-
-
-  /**
-     @brief Training constructor.
-   */
-  ForestBridge(unsigned int treeChunk);
+	       const tuple<double, double, string>& scoreDesc,
+	       const SamplerBridge* samplerBridge);
 
   
+  /**
+     @brief As above, but populates Leaf.
+   */  
+  ForestBridge(unsigned int nTree,
+	       const double nodeExtent[],
+	       const complex<double> treeNode[],
+	       const double scores[],
+	       const double facExtent[],
+               const unsigned char facSplit[],
+	       const unsigned char facObserved[],
+	       const tuple<double, double, string>& scoreDesc,
+	       const SamplerBridge* samplerBridge, // Assumed non-null.
+	       const double extent_[],
+	       const double index_[]);
+
+  
+  /**
+     @brief Move constructor.
+   */
   ForestBridge(ForestBridge&&);
 
   
@@ -81,15 +99,9 @@ struct ForestBridge {
   
   
   /**
-     @return count of trained nodes.
-   */
-  size_t getNodeCount() const;
-
-  
-  /**
      @brief Returns pointer to core-level Forest.
    */
-  class Forest* getForest() const;
+  Forest* getForest() const;
 
 
   /**
@@ -98,43 +110,8 @@ struct ForestBridge {
   unsigned int getNTree() const;
 
 
-  const vector<size_t>& getNodeExtents() const;
-
-
   const vector<size_t>& getFacExtents() const;
 
-  
-  /**
-     @brief Passes through to Forest method.
-
-     @return # bytes in current chunk of factors.
-   */
-  size_t getFactorBytes() const;
-  
-
-  /**
-     @brief Dumps the tree nodes into a fixed-size complex-valued buffer.
-   */
-  void dumpTree(complex<double> treeOut[]) const;
-
-  
-  /**
-     @brief Dumps the scores into a fixed-size numeric buffer.
-   */
-  void dumpScore(double scoreOut[]) const;
-  
-
-  /**
-     @brief Dumps the splitting bits into a fixed-size raw buffer.
-   */
-  void dumpFactorRaw(unsigned char facOut[]) const;
-
-  
-  /**
-     @brief Dumps the observed bits into a fixed-sized raw buffer.
-   */
-  void dumpFactorObserved(unsigned char obsOut[]) const;
-  
 
   /**
      @brief Dumps the forest into per-tree vectors.
@@ -142,11 +119,12 @@ struct ForestBridge {
   void dump(vector<vector<unsigned int> >& predTree,
             vector<vector<double> >& splitTree,
             vector<vector<size_t> >& lhDelTree,
-            vector<vector<unsigned char> >& facSplitTree) const;
+            vector<vector<unsigned char> >& facSplitTree,
+	    vector<vector<double>>& scoreTree) const;
   
 private:
 
-  unique_ptr<class Forest> forest; ///< Core-level instantiation.
+  unique_ptr<Forest> forest; ///< Core-level instantiation.
 };
 
 #endif

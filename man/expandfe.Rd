@@ -17,10 +17,10 @@
 }
 
 \arguments{
-  \item{arbOut}{an object of type \code{RfArb} produced by training.}
+  \item{arbOut}{an object of type \code{rfTrain} produced by training.}
 }
 
-\value{An object of type \code{ExportReg} or \code{ExportCtg} containing
+\value{An object of type \code{ExpandReg} or \code{ExpandCtg} containing
   human-readable representations of the trained forest.
 }
 

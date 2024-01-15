@@ -58,7 +58,8 @@ class ObsFrontier {
      @brief Initializes a path from ancestor to front.
    */
   void pathInit(NodePath* pathBase,
-		const class IndexSet& iSet);
+		const class IndexSet& iSet,
+		IndexT endIdx);
   
 
   void updateLive(const class BranchSense& branchSense,
@@ -152,7 +153,8 @@ public:
 
 
   void setFrontRange(const vector<IndexSet>& frontierNodes,
-		     const vector<IndexSet>& frontierNext);
+		     const vector<IndexSet>& frontierNext,
+		     IndexT endIdx);
 
   
   /**
@@ -162,13 +164,14 @@ public:
    */
   void setFrontRange(const vector<class IndexSet>& frontierNext,
 		     IndexT parIdx,
-		     const IndexRange& range);
+		     const IndexRange& range,
+		     IndexT endIdx);
 
 
   /**
      @brief Getter for front range at a given split index.
    */
-  inline IndexRange getFrontRange(IndexT splitIdx) const {
+  IndexRange getFrontRange(IndexT splitIdx) const {
     return node2Front[splitIdx];
   }
   
@@ -181,7 +184,8 @@ public:
      @param frontCount is the number of nodes in the new front.
   */
   void applyFront(const ObsFrontier* ofCurrent,
-		  const vector<class IndexSet>& frontierNext);
+		  const vector<class IndexSet>& frontierNext,
+		  IndexT endIdx);
 
   /**
      @brief Allocates the run values vector.
@@ -252,7 +256,7 @@ public:
   /**
      @brief Delists cell and crements stage count.
    */
-  inline void delist(StagedCell& cell) {
+  void delist(StagedCell& cell) {
     cell.delist();
     stageCount--;
   }
@@ -298,7 +302,7 @@ public:
 
      @return shifted value.
    */  
-  inline IndexT backScale(IndexT idx) const {
+  IndexT backScale(IndexT idx) const {
     return idx << (unsigned int) (layerIdx + 1);
   }
 
@@ -308,17 +312,17 @@ public:
 
      @return bit mask value.
    */
-  inline unsigned int pathMask() const {
+  unsigned int pathMask() const {
     return backScale(1) - 1;
   }
   
 
-  inline PredictorT getNPred() const {
+  PredictorT getNPred() const {
     return nPred;
   }
 
   
-  inline IndexT getNSplit() const {
+  IndexT getNSplit() const {
     return nSplit;
   }
 };

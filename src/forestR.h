@@ -1,13 +1,13 @@
-// Copyright (C)  2012-2023  Mark Seligman
+// Copyright (C)  2012-2024  Mark Seligman
 //
-// This file is part of rf.
+// This file is part of RboristBase.
 //
-// rf is free software: you can redistribute it and/or modify it
+// RboristBase is free software: you can redistribute it and/or modify it
 // under the terms of the GNU General Public License as published by
 // the Free Software Foundation, either version 2 of the License, or
 // (at your option) any later version.
 //
-// rf is distributed in the hope that it will be useful, but
+// RboristBase is distributed in the hope that it will be useful, but
 // WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 // GNU General Public License for more details.
@@ -35,6 +35,7 @@ using namespace Rcpp;
 #include <vector>
 using namespace std;
 
+struct SamplerBridge;
 
 /**
    @brief Front-end access to ForestBridge.
@@ -50,13 +51,32 @@ struct ForestR {
 
   
   /**
-     @brief Factory incorporating trained forest cached by front end.
+     @brief Dumping unwrapper.
 
      @param sTrain is an R-stye List node containing forest vectors.
 
+     @param categorical indicates classification; legacy support only.
+     
      @return bridge specialization of Forest prediction type.
   */
-  static struct ForestBridge unwrap(const List& sTrain);
+  static struct ForestBridge unwrap(const List& sTrain,
+				    bool categorical = false);
+
+  
+  /**
+     @brief Prediction unwrapper.
+   */
+  static struct ForestBridge unwrap(const List& sTrain,
+				    const SamplerBridge& samplerBridge);
+
+
+  /**
+     @brief Unwraps the score descriptor as a tuple.
+
+     @param categorical is true iff classification:  legacy support.
+   */
+  static tuple<double, double, string> unwrapScoreDesc(const List& lTrain,
+						       bool categorical);
 };
 
 
@@ -70,6 +90,7 @@ class ForestExpand {
   vector<vector<int>> senseTree;
   vector<vector<double > > splitTree;
   vector<vector<unsigned char> > facSplitTree;
+  vector<vector<double>> scoreTree; ///< All nodes have scores.
 
   void predExport(const int predMap[]);
   void treeExport(const int predMap[],
@@ -92,13 +113,18 @@ class ForestExpand {
 
      @return vector of unpacked values.
    */
-  const vector<unsigned int> &getPredTree(unsigned int tIdx) const {
+  const vector<unsigned int>& getPredTree(unsigned int tIdx) const {
     return predTree[tIdx];
   }
 
   const vector<size_t>& getBumpTree(unsigned int tIdx) const {
     return bumpTree[tIdx];
   }
+
+  const vector<double>& getScoreTree(unsigned int tIdx) const {
+    return scoreTree[tIdx];
+  }
+  
 
   const vector<double> &getSplitTree(unsigned int tIdx) const {
     return splitTree[tIdx];
@@ -112,6 +138,14 @@ class ForestExpand {
   const vector<vector<int>>& getSenseTree() const {
     return senseTree;
   }
+
+
+  static List expand(const List& sTrain,
+		     const IntegerVector& predMap);
+
+
+  static List expandTree(const class ForestExpand& forestExpand,
+                           unsigned int tIdx);
 };
 
 
@@ -128,14 +162,18 @@ struct FBTrain {
   static const string strFactor;
   static const string strFacSplit;
   static const string strObserved;
+  static const string strScoreDesc;
+  static const string strNu;
+  static const string strBaseScore;
+  static const string strForestScorer;
 
-  const unsigned int nTree; // Total # trees under training.
+  const unsigned int nTree; ///< Total # trees under training.
 
   // Decision node related:
-  NumericVector nodeExtent; // # nodes in respective tree.
-  size_t nodeTop; // Next available index in node/score buffers.
-  ComplexVector cNode; // Nodes encoded as complex pairs.
-  NumericVector scores; // Same indices as nodeRaw.
+  NumericVector nodeExtent; ///< # nodes in respective tree.
+  size_t nodeTop; ///< Next available index in node/score buffers.
+  ComplexVector cNode; ///< Nodes encoded as complex pairs.
+  NumericVector scores; ///< Same indices as nodeRaw.
 
   // Factor related:
   NumericVector facExtent; // # factor entries in respective tree.
@@ -143,8 +181,13 @@ struct FBTrain {
   RawVector facRaw; // Bit-vector representation of factor splits.
   RawVector facObserved; // " " observed levels.
 
-  FBTrain(unsigned int nTree);
+  // Scoring descriptor:
+  double nu; ///< Learning rate.
+  double baseScore; ///< Score of sampled root.
+  string forestScorer; ///< How to score the forest.
 
+  FBTrain(unsigned int nTree);
+  
 
   /**
      @brief Decorates trained forest for storage by front end.
@@ -155,16 +198,19 @@ struct FBTrain {
   /**
      @brief Copies core representation of forest components.
 
-     @param bridge caches a crescent forest chunk.
+     @param grove caches a crescent forest chunk.
 
-     @param treeOff is the beginning tree index of the trained chunk.
+     @param treeOff is the beginning tree index of the grove.
 
      @param fraction is a scaling factor used to estimate buffer size.
    */
-  void bridgeConsume(const struct ForestBridge& bridge,
-		     unsigned int treeOff,
-		     double fraction);
+  void groveConsume(const struct GroveBridge* grove,
+		    unsigned int treeOff,
+		    double fraction);
 
+
+  void scoreDescConsume(const struct TrainBridge& trainBridge);
+  
 
 private:
 
@@ -180,7 +226,7 @@ private:
 
      @param fraction is a scaling factor used to estimate buffer size.
    */
-  void nodeConsume(const struct ForestBridge& bridge,
+  void nodeConsume(const struct GroveBridge* grove,
 		   unsigned int treeOff,
 		   double fraction);
 
@@ -188,9 +234,15 @@ private:
   /**
      @brief As above, but collects factor-splitting parameters.
    */
-  void factorConsume(const struct ForestBridge& bridge,
+  void factorConsume(const struct GroveBridge* bridge,
 		     unsigned int treeOff,
 		     double fraction);
+
+
+  /**
+     @brief Summarizes requirements of the training algorithm.
+   */
+  List summarizeScoreDesc();
 };
 
 #endif

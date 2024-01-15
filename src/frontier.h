@@ -22,6 +22,7 @@
 #include "indexset.h"
 #include "typeparam.h"
 #include "stagedcell.h"
+#include "nodescorer.h"
 
 #include <algorithm>
 #include <vector>
@@ -33,19 +34,27 @@
 class Frontier {
   static unsigned int totLevels;
   const class PredictorFrame* frame;
-  const unique_ptr<class SampledObs> sampledObs;
+  struct NodeScorer* scorer;
+  unique_ptr<class SampledObs> sampledObs;
   const IndexT bagCount;
   const PredictorT nCtg;
 
-  vector<IndexSet> frontierNodes;
+  vector<IndexSet> frontierNodes; ///< Splitable nodes within a level.
   unique_ptr<class InterLevel> interLevel;
 
   unique_ptr<PreTree> pretree; // Augmented per frontier.
   
-  SampleMap smTerminal; // Persistent terminal sample mapping:  crescent.
-  SampleMap smNonterm; // Current nonterminal mapping.
+  SampleMap smTerminal; ///< Persistent terminal sample mapping:  crescent.
 
   unique_ptr<class SplitFrontier> splitFrontier; // Per-level.
+
+  /**
+     @brief Initializes root state of auxiliary data structures.
+     
+     @return map of bagged samples.
+   */
+  SampleMap produceRoot(const class PredictorFrame* frame);
+
 
   /**
      @brief Determines splitability of frontier nodes just split.
@@ -65,7 +74,7 @@ class Frontier {
   /**
      @brief Applies splitting results to new level.
   */
-  SampleMap splitDispatch();
+  SampleMap splitDispatch(const SampleMap& smNonterm);
 
 
   /**
@@ -83,6 +92,7 @@ class Frontier {
    */
   void earlyExit(unsigned int level);
 
+  
 public:
 
 
@@ -99,19 +109,20 @@ public:
   /**
      @brief Resets statics to default values.
   */
-  static void deImmutables();
+  static void deInit();
 
 
   /**
      @brief Per-tree constructor.  Sets up root node for level zero.
   */
   Frontier(const class PredictorFrame* frame,
+	   const class Grove* train,
 	   const class Sampler* sampler,
 	   unsigned int tIdx);
 
   
   /**
-    @brief Trains one tree.
+    @brief Groves one tree.
 
     @param predictor contains the predictor type mappings.
 
@@ -120,23 +131,25 @@ public:
     @return trained pretree object.
   */
   static unique_ptr<class PreTree> oneTree(const class PredictorFrame* frame,
+					   const class Grove* train,
 					   const class Sampler* sampler,
 					   unsigned int tIdx);
 
-
+  
   /**
      @brief Drives breadth-first splitting.
 
+     @param smNonterm maps sample index to nonterminal.
+
      Assumes root node and attendant per-tree data structures have been initialized.
-     Parameters as described above.
   */
-  unique_ptr<class PreTree> levels();
+  unique_ptr<class PreTree> splitByLevel(SampleMap& smNonterm);
 
 
   /**
      @brief Produces frontier nodes for next level.
    */
-  vector<IndexSet> produce() const;
+  vector<IndexSet> produceLevel();
 
   
   /**
@@ -152,15 +165,6 @@ public:
   void updateCompound(const vector<vector<class SplitNux>>& nuxMax,
 		      class BranchSense& branchSense);
 
-
-  void setScore(IndexT splitIdx) const;
-
-  
-  /**
-     @return end position of nonterminal map.
-   */
-  IndexT getNonterminalEnd() const;
-  
 
   const vector<IndexSet>& getNodes() const {
     return frontierNodes;
@@ -251,7 +255,7 @@ public:
 
      @return bagCount value.
    */
-  inline auto getBagCount() const {
+  auto getBagCount() const {
     return bagCount;
   }
 
@@ -259,7 +263,7 @@ public:
   /**
      @brief Getter for # categories in response.
    */
-  inline auto getNCtg() const {
+  auto getNCtg() const {
     return nCtg;
   }
 
@@ -267,7 +271,7 @@ public:
   /**
      @brief Accessor for count of splitable sets.
    */
-  inline IndexT getNSplit() const {
+  IndexT getNSplit() const {
     return frontierNodes.size();
   }
 
@@ -279,7 +283,7 @@ public:
 
      @return index set's sum value.
    */
-  inline auto getSum(IndexT splitIdx) const {
+  auto getSum(IndexT splitIdx) const {
     return frontierNodes[splitIdx].getSum();
   }
 
@@ -287,7 +291,7 @@ public:
   /**
      @brief As above, but parametrized by candidate location.
    */
-  inline auto getSum(const StagedCell* mrra) const {
+  auto getSum(const StagedCell* mrra) const {
     return getSum(mrra->getNodeIdx());
   }
 
@@ -295,12 +299,12 @@ public:
   /**
      @brief Accessor for count of sampled responses over set.
    */
-  inline auto getSCount(IndexT splitIdx) const {
+  auto getSCount(IndexT splitIdx) const {
     return frontierNodes[splitIdx].getSCount();
   }
 
 
-  inline auto getSCount(const StagedCell* mrra) const {
+  auto getSCount(const StagedCell* mrra) const {
     return getSCount(mrra->getNodeIdx());
   }
 
@@ -308,13 +312,13 @@ public:
   /**
      @brief Accessor for count of sampled responses over set.
    */
-  inline auto getSCountSucc(IndexT splitIdx,
+  auto getSCountSucc(IndexT splitIdx,
 			    bool sense) const {
     return frontierNodes[splitIdx].getSCountSucc(sense);
   }
 
 
-  inline auto getSCountSucc(const StagedCell* mrra,
+  auto getSCountSucc(const StagedCell* mrra,
 			    bool sense) const {
     return getSCountSucc(mrra->getNodeIdx(), sense);
   }
@@ -323,13 +327,13 @@ public:
   /**
      @brief Accessor for count of sampled responses over set.
    */
-  inline auto getSumSucc(IndexT splitIdx,
+  auto getSumSucc(IndexT splitIdx,
 			    bool sense) const {
     return frontierNodes[splitIdx].getSumSucc(sense);
   }
 
 
-  inline auto getSumSucc(const StagedCell* mrra,
+  auto getSumSucc(const StagedCell* mrra,
 			    bool sense) const {
     return getSumSucc(mrra->getNodeIdx(), sense);
   }
@@ -338,23 +342,15 @@ public:
   /**
      @brief Accessor for count of disinct indices over set.
    */
-  inline auto getExtent(IndexT splitIdx) const {
+  auto getExtent(IndexT splitIdx) const {
     return frontierNodes[splitIdx].getExtent();
   }
 
 
   /**
-     @return node starting index in upcoming level.
-   */
-  IndexT idxStartUpcoming(const IndexSet& iSet) const {
-    return smNonterm.range[iSet.getSplitIdx()].getStart();
-  }
-
-  
-  /**
      @brief Indicates whether index set is inherently unsplitable.
    */
-  inline bool isUnsplitable(IndexT splitIdx) const {
+  bool isUnsplitable(IndexT splitIdx) const {
     return frontierNodes[splitIdx].isUnsplitable();
   }
 

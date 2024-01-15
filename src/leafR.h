@@ -1,4 +1,4 @@
-// Copyright (C)  2012-2023   Mark Seligman
+// Copyright (C)  2012-2024   Mark Seligman
 //
 // This file is part of RboristBase.
 //
@@ -29,7 +29,6 @@
 #include <Rcpp.h>
 using namespace Rcpp;
 
-#include <memory>
 using namespace std;
 
 /**
@@ -65,113 +64,6 @@ struct LeafR {
    */
   void bridgeConsume(const struct LeafBridge& sb,
 		     double scale);
-
-
-  static LeafBridge unwrap(const List& lLeaf,
-			   const struct SamplerBridge& samplerBridge);
-};
-
-
-struct LeafExpand {
-  LeafExpand(const List& lSampler);
-
-  virtual ~LeafExpand() {}
-
-  /**
-     @brief Accessor for per-tree sampled row vector.
-
-     @param tIdx is the tree index.
-
-     @return sampled row vector.
-   */
-  const vector<size_t> &getRowTree(unsigned int tIdx) const {
-    return rowTree[tIdx];
-  }
-
-
-  /**
-     @brief Accessor for per-tree sample-count vector.
-
-     @param tIdx is the tree index.
-
-     @return sample-count vector.
-   */
-  const vector<unsigned int> &getSCountTree(unsigned int tIdx) const {
-    return sCountTree[tIdx];
-  }
-
-
-  /**
-     @brief Accessor for per-tree extent vector.
-
-     @param tIdx is the tree index.
-
-     @return extent vector.
-   */
-  const vector<unsigned int> &getExtentTree(unsigned int tIdx) const {
-    return extentTree[tIdx];
-  }
-
-  
-  /**
-     @brief Accessor for per-tree score vector.
-   */
-  const vector<double> &getScoreTree(unsigned int tIdx) const {
-    return scoreTree[tIdx];
-  }
-
- protected:
-  unsigned int nTree;
-  vector<vector<size_t> > rowTree;
-  vector<vector<unsigned int> > sCountTree;
-  vector<vector<unsigned int> > extentTree;
-  vector<vector<double > > scoreTree;
-};
-
-
-struct LeafExpandReg : public LeafExpand {
-  /**
-    @brief Constructor for export, no prediction.
-   */
-  LeafExpandReg(const List& lSampler);
-
-
-  ~LeafExpandReg();
-
-
-  /**
-     @brief Builds bridge object from wrapped front-end data.
-   */
-  static LeafExpandReg unwrap(const List &lTrain);
-
-};
-
-
-struct LeafExpandCtg : public LeafExpand {
-  /**
-     @brief Constructor for export; no prediction.
-   */
-  LeafExpandCtg(const List& lSampler);
-
-  
-  ~LeafExpandCtg();
-
-  
-  static LeafExpandCtg unwrap(const List &lTrain);
-
-  
-  /**
-     @brief Accessor exposes category name strings.
-
-     @return level names vector.
-   */
-  const CharacterVector &getLevelsTrain() const {
-    return levelsTrain;
-  }
-
-  
- private:
-  const CharacterVector levelsTrain; // Pinned for summary reuse.
 };
 
 

@@ -20,30 +20,40 @@
 #include "sampler.h"
 #include <algorithm>
 
+
 const unsigned int Quant::binSize = 0x1000;
+vector<double> Quant::quantile = vector<double>(0);
+
+
+void Quant::init(vector<double> quantile_) {
+  quantile = std::move(quantile_);
+}
+
+
+void Quant::deInit() {
+  quantile = vector<double>(0);
+}
 
 
 /**
    @brief Constructor.  Caches parameter values and computes compressed
    leaf indices.
  */
-Quant::Quant(const Forest* forest,
-	     const Leaf* leaf_,
+Quant::Quant(const Sampler* sampler,
 	     const Predict* predict,
-	     const ResponseReg* response,
-             const vector<double>& quantile_) :
-  quantile(std::move(quantile_)),
+	     bool reportAuxiliary) :
+  leaf(predict->forest->getLeaf()),
+  empty(!reportAuxiliary || quantile.empty() || leaf.empty() || !sampler->hasSamples()),
   qCount(quantile.size()),
-  sampler(predict->getSampler()),
-  leaf(leaf_),
-  empty(!sampler->hasSamples() || quantile.empty()),
-  leafDom((empty || !predict->trapAndBail()) ? vector<vector<IndexRange>>(0) : forest->leafDominators()), 
-  valRank(RankedObs<double>(&response->getYTrain()[0], empty ? 0 : response->getYTrain().size())),
-  rankCount(empty ? vector<vector<vector<RankCount>>>(0) : leaf->alignRanks(sampler, valRank.rank())),
+  trapAndBail(Predict::trapUnobserved),
+  leafDom((empty || !trapAndBail) ? vector<vector<IndexRange>>(0) : predict->forest->leafDominators()), 
+  valRank(RankedObs<double>(&(reinterpret_cast<const ResponseReg*>(sampler->getResponse())->getYTrain())[0],
+			    empty ? 0 : reinterpret_cast<const ResponseReg*>(sampler->getResponse())->getYTrain().size())),
+  rankCount(empty ? vector<vector<vector<RankCount>>>(0) : leaf.alignRanks(sampler, valRank.rank())),
   rankScale(empty ? 0 : binScale()),
   binMean(empty ? vector<double>(0) : binMeans(valRank)),
-  qPred(vector<double>(empty ? 0 : predict->getNRow() * qCount)),
-  qEst(vector<double>(empty ? 0 : predict->getNRow())) {
+  qPred(vector<double>(empty ? 0 : predict->getNObs() * qCount)),
+  qEst(vector<double>(empty ? 0 : predict->getNObs())) {
 }
 
 
@@ -75,13 +85,17 @@ vector<double> Quant::binMeans(const RankedObs<double>& valRank) const {
 }
 
 
-void Quant::predictRow(const PredictReg* predict, size_t row) {
+void Quant::predictRow(const Predict* predict,
+		       const ForestPredictionReg* prediction,
+		       size_t obsIdx) {
+  if (isEmpty())
+    return;
   vector<IndexT> sCountBin(std::min(static_cast<IndexT>(binSize), valRank.getRankCount()));
   IndexT totSamples = 0;
-  if (predict->trapAndBail()) {
-    for (unsigned int tIdx = 0; tIdx < sampler->getNTree(); tIdx++) {
+  if (trapAndBail) {
+    for (unsigned int tIdx = 0; tIdx < predict->getNTree(); tIdx++) {
       IndexT nodeIdx;
-      if (predict->isNodeIdx(row, tIdx, nodeIdx)) {
+      if (predict->getFinalIdx(obsIdx, tIdx, nodeIdx)) {
 	IndexRange leafRange = leafDom[tIdx][nodeIdx];
 	for (IndexT leafIdx = leafRange.getStart(); leafIdx != leafRange.getEnd(); leafIdx++) {
 	  totSamples += sampleLeaf(tIdx, leafIdx, sCountBin);
@@ -90,9 +104,9 @@ void Quant::predictRow(const PredictReg* predict, size_t row) {
     }
   }
   else {
-    for (unsigned int tIdx = 0; tIdx < sampler->getNTree(); tIdx++) {
+    for (unsigned int tIdx = 0; tIdx < predict->getNTree(); tIdx++) {
       IndexT leafIdx;
-      if (predict->isLeafIdx(row, tIdx, leafIdx)) {
+      if (predict->isLeafIdx(obsIdx, tIdx, leafIdx)) {
 	totSamples += sampleLeaf(tIdx, leafIdx, sCountBin);
       }
     }
@@ -105,7 +119,7 @@ void Quant::predictRow(const PredictReg* predict, size_t row) {
   }
 
   // Fills in quantile estimates.
-  quantSamples(predict, sCountBin, countThreshold, totSamples, row);
+  quantSamples(prediction, sCountBin, countThreshold, totSamples, obsIdx);
 }
 
 
@@ -123,17 +137,17 @@ IndexT Quant::sampleLeaf(unsigned int tIdx,
 }
 
 
-void Quant::quantSamples(const PredictReg* predict,
+void Quant::quantSamples(const ForestPredictionReg* prediction,
 			 const vector<IndexT>& sCountBin,
                          const vector<double>& threshold,
 			 IndexT totSample,
-			 size_t row) {
+			 size_t obsIdx) {
   unsigned int qSlot = 0;
   unsigned int binIdx = 0;
   IndexT samplesSeen = 0;
   IndexT leftSamples = 0; // # samples with y-values <= yPred.
-  double yPred = predict->getYPred(row);
-  double* qRow = &qPred[qCount * row];
+  double yPred = prediction->getValue(obsIdx);
+  double* qRow = &qPred[qCount * obsIdx];
   for (auto sc : sCountBin) {
     samplesSeen += sc;
     while (qSlot < qCount && samplesSeen >= threshold[qSlot]) {
@@ -147,5 +161,5 @@ void Quant::quantSamples(const PredictReg* predict,
     binIdx++;
   }
 
-  qEst[row] = static_cast<double>(leftSamples) / totSample;
+  qEst[obsIdx] = static_cast<double>(leftSamples) / totSample;
 }

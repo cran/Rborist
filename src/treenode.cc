@@ -12,18 +12,17 @@
 
    @author Mark Seligman
  */
-
-
 #include "treenode.h"
+#include "predictframe.h"
 #include "predictorframe.h"
 #include "bv.h"
-#include "predict.h"
 #include "splitnux.h"
 
 unsigned int TreeNode::rightBits = 0;
 PredictorT TreeNode::rightMask = 0;
 
-void TreeNode::init(PredictorT nPred) {
+
+void TreeNode::initMasks(PredictorT nPred) {
   rightBits = 0;
   while ((1ul << ++rightBits) < nPred);
   rightMask = (1ull << rightBits) - 1;
@@ -36,6 +35,13 @@ void TreeNode::deInit() {
 }
 
 
+TreeNode::TreeNode(complex<double> pair) :
+  packed(abs(pair.real())),
+  criterion(pair.imag()),
+  invert(pair.real() < 0.0) {
+}
+
+  
 void TreeNode::critCut(const SplitNux& nux,
 		       const class SplitFrontier* splitFrontier) {
   setPredIdx(nux.getPredIdx());
@@ -54,23 +60,5 @@ void TreeNode::setQuantRank(const PredictorFrame* frame) {
   PredictorT predIdx = getPredIdx();
   if (isNonterminal() && !frame->isFactor(predIdx)) {
     criterion.setQuantRank(frame, predIdx);
-  }
-}
-
-
-IndexT TreeNode::advanceMixed(const Predict* predict,
-			      const vector<unique_ptr<BV>>& factorBits,
-			      const vector<unique_ptr<BV>>& bitsObserved,
-			      const CtgT* rowFT,
-			      const double* rowNT,
-			      unsigned int tIdx,
-			      bool trapUnobserved) const {
-  bool isFactor;
-  IndexT blockIdx = predict->getIdx(getPredIdx(), isFactor);
-  if (isFactor) {
-    return advanceFactor(factorBits[tIdx].get(), bitsObserved[tIdx].get(), getBitOffset() + rowFT[blockIdx], trapUnobserved);
-  }
-  else {
-    return advanceNum(rowNT[blockIdx], trapUnobserved);
   }
 }

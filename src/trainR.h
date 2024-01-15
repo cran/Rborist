@@ -1,4 +1,4 @@
-// Copyright (C)  2012-2023   Mark Seligman
+// Copyright (C)  2012-2024   Mark Seligman
 //
 // This file is part of RboristBase.
 //
@@ -38,14 +38,24 @@ using namespace std;
 #include "forestR.h"
 #include "samplerbridge.h"
 
+/**
+   @brief Expands trained forest into summary vectors.
+
+   @param sTrain is the trained forest.
+
+   @return expanded forest as list of vectors.
+*/
+RcppExport SEXP expandTrainRcpp(SEXP sTrain);
+
 
 struct TrainR {
 
   // Training granularity.  Values guesstimated to minimize footprint of
   // Core-to-Bridge copies while also not over-allocating:
-  static constexpr unsigned int treeChunk = 20;
+  static constexpr unsigned int groveSize = 20;
   static constexpr double allocSlop = 1.2;
 
+  static const string strY; 
   static const string strVersion;
   static const string strSignature;
   static const string strSamplerHash;
@@ -55,24 +65,45 @@ struct TrainR {
   static const string strLeaf;
   static const string strDiagnostic;
   static const string strClassName;
+  static const string strAutoCompress;
+  static const string strEnableCoproc;
+  static const string strVerbose;
+  static const string strProbVec;
+  static const string strPredFixed;
+  static const string strSplitQuant;
+  static const string strMinNode;
+  static const string strNLevel;
+  static const string strMinInfo;
+  static const string strLoss;
+  static const string strForestScore;
+  static const string strNodeScore;
+  static const string strMaxLeaf;
+  static const string strObsWeight;
+  static const string strThinLeaves;
+  static const string strTreeBlock;
+  static const string strNThread;
+  static const string strRegMono;
+  static const string strClassWeight;
 
   static bool verbose; ///< Whether to report progress while training.
 
-  const SamplerBridge samplerBridge;
+  const SamplerBridge samplerBridge; ///< handle to core Sampler image.
   const unsigned int nTree; ///< # trees under training.
   LeafR leaf; ///< Summarizes sample-to-leaf mapping.
   FBTrain forest; ///< Pointer to core forest.
   NumericVector predInfo; ///< Forest-wide sum of predictors' split information.
+  double nu; ///< Learning rate, passed up from training.
+  double baseScore; ///< Base score, " ".
+
+  /**
+     @brief Tree count dictated by sampler.
+   */
+  TrainR(const List& lSampler);
 
 
-  TrainR(const List& lSampler,
-	 const List& argList);
+  void trainGrove(const struct TrainBridge& tb);
 
-
-  void trainChunks(const struct TrainBridge& tb,
-		   bool thinLeaves);
-
-
+  
   /**
      @brief Scales the per-predictor information quantity by # trees.
 
@@ -80,12 +111,15 @@ struct TrainR {
    */
   NumericVector scaleInfo(const TrainBridge& trainBridge) const;
 
-  
+
   /**
-     @return implicit R_NilValue.
+     @brief Per-invocation initialization of core static values.
+
+     Algorithm-specific implementation included by configuration
+     script.
    */
-  static SEXP initFromArgs(const List &argList,
-			   struct TrainBridge& trainBridge);
+  static void initPerInvocation(const List &argList,
+				struct TrainBridge& trainBridge);
 
 
   /**
@@ -95,15 +129,31 @@ struct TrainR {
 
 
   /**
-     @brief Static entry into training of independent trees.
+     @brief Static entry into training.
 
      @param argList is the user-supplied argument list.
 
      @return R-style list of trained summaries.
    */
-  static List trainInd(const List& lRLEFrame,
-		       const List& lSampler,
-		       const List& argList);
+  static List train(const List& lRLEFrame,
+		    const List& lSampler,
+		    const List& argList);
+
+
+  /**
+      @brief Class weighting.
+
+      Class weighting constructs a proxy response based on category
+      frequency.  In the absence of class weighting, proxy values are
+      identical for all clasess.  The technique of class weighting is
+      not without controversy.
+
+      @param classWeight are user-suppled weightings of the categories.
+
+      @return core-ready vector of unnormalized class weights.
+   */
+  static vector<double> ctgWeight(const IntegerVector& yTrain,
+				  const NumericVector& classWeight);
 
 
   /**
@@ -113,18 +163,12 @@ struct TrainR {
 
      @param scale guesstimates a reallocation size.
    */
-  void consume(const struct ForestBridge& fb,
+  void consume(const struct GroveBridge* grove,
 	       const struct LeafBridge& lb,
                unsigned int tIdx,
                unsigned int chunkSize);
 
 
-  /**
-     @brief As above, but consumes information vector.
-   */
-  void consumeInfo(const struct TrainedChunk* train);
-
-  
   /**
      @brief Whole-forest summary of trained chunks.
 
@@ -139,8 +183,14 @@ struct TrainR {
   List summarize(const TrainBridge& trainBridge,
 		 const List& lDeframe,
 		 const List& lSampler,
+		 const List& argList,
 		 const vector<string>& diag);
 
+
+  /**
+     @brief Expands contents as vectors interpretable by the front end.
+   */
+  static List expand(const List& lTrain);
   
 private:
   
@@ -152,7 +202,7 @@ private:
 
      @return scale estimation sufficient to accommodate entire forest.
    */
-  inline double safeScale(unsigned int treesTot) const {
+  double safeScale(unsigned int treesTot) const {
     return (treesTot == nTree ? 1 : allocSlop) * double(nTree) / treesTot;
   }
 };

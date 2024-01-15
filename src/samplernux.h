@@ -56,9 +56,18 @@ public:
 
   
   /**
+     @brief Unpacks according to front-end specification.
+   */
+  static vector<vector<SamplerNux>> unpack(const double samples[],
+					   IndexT nSamp,
+					   unsigned int nTree,
+					   PredictorT nCtg = 0);
+
+
+  /**
      @return difference in adjacent row numbers.  Always < nObs.
    */
-  inline IndexT getDelRow() const {
+  IndexT getDelRow() const {
     return packed & delMask;
   }
   
@@ -66,7 +75,7 @@ public:
   /**
      @return sample count
    */  
-  inline IndexT getSCount() const {
+  IndexT getSCount() const {
     return packed >> rightBits;
   }
 
@@ -76,6 +85,15 @@ public:
    */
   static IndexT getSCount(PackedT packed) {
     return packed >> rightBits;
+  }
+
+  /**
+     @brief Obtains row delta for external packed value.
+
+     Debugging only, currently.
+   */
+  static IndexT getDelRow(PackedT packed) {
+    return packed & delMask;
   }
 
 

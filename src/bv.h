@@ -29,9 +29,8 @@ typedef size_t BVSlotT; // Slot container type.
 
 
 class BV {
-  size_t nSlot; // Number of typed (BVSlotT) slots.
-  vector<BVSlotT> rawV; // Internal manager for writable instances.
-  const BVSlotT* raw; // Points to rawV iff writable, else external buffer.
+  size_t nSlot; ///< Number of typed (BVSlotT) slots.
+  vector<BVSlotT> rawV; ///< Internal manager for writable instances.
   
  public:
   static const size_t full;
@@ -41,15 +40,13 @@ class BV {
 
   BV(const BV* bv) :
     nSlot(bv->nSlot),
-    rawV(vector<BVSlotT>(nSlot)),
-    raw(nSlot == 0 ? nullptr : &rawV[0]) {
+    rawV(vector<BVSlotT>(nSlot)) {
   }
 
   
   BV(size_t bitLen) :
     nSlot(slotAlign(bitLen)),
-    rawV(vector<BVSlotT>(nSlot)),
-    raw(nSlot == 0 ? nullptr : &rawV[0]) {
+    rawV(vector<BVSlotT>(nSlot)) {
   }
 
   /**
@@ -57,8 +54,7 @@ class BV {
   */
   BV(const vector<BVSlotT>& raw_) :
     nSlot(raw_.size()),
-    rawV(raw_.begin(), raw_.end()),
-    raw(nSlot == 0 ? nullptr : &rawV[0]) {
+    rawV(raw_.begin(), raw_.end()) {
   }
 
   
@@ -68,8 +64,7 @@ class BV {
   BV(const unsigned char bytes[],
      size_t nSlot_) :
     nSlot(nSlot_),
-    rawV(vector<BVSlotT>(nSlot)),
-    raw(nSlot == 0 ? nullptr : &rawV[0]) {
+    rawV(vector<BVSlotT>(nSlot)) {
     if (nSlot != 0) {
       unsigned char* bufOut = reinterpret_cast<unsigned char*>(&rawV[0]);
       for (size_t idx = 0; idx < nSlot * sizeof(BVSlotT); idx++) {
@@ -79,20 +74,13 @@ class BV {
   }
 
 
-  /**
-     @brief Wraps external buffer:  unwritable.
+  ~BV() = default;
 
-     @param raw_ points to an external buffer.
 
-     @param nSlot_ is the number of readable BVSlotT slots in the buffer.
-   */
-   BV(const BVSlotT raw_[],
-      size_t nSlot_) : nSlot(nSlot_),
-		       raw(raw_) {  }
-
+  const BVSlotT& getRaw(size_t i) const {
+    return rawV[i];
+  }
   
-  ~BV(){}
-
   
   /**
      @brief Sets slots from a vector position deltas.
@@ -100,21 +88,21 @@ class BV {
   void delEncode(const vector<IndexT>& delPos);
 
 
-  inline void dumpRaw(unsigned char *bbRaw) const {
+  void dumpRaw(unsigned char *bbRaw) const {
     if (nSlot == 0)
       return;
-    const unsigned char* rawChar = reinterpret_cast<const unsigned char*>(&raw[0]);
+    const unsigned char* rawChar = reinterpret_cast<const unsigned char*>(&rawV[0]);
     for (size_t i = 0; i < nSlot * sizeof(BVSlotT); i++) {
       bbRaw[i] = rawChar[i];
     }
   }
 
   
-  inline vector<BVSlotT> dumpVec(size_t base, size_t extent) const {
+  vector<BVSlotT> dumpVec(size_t base, size_t extent) const {
     vector<BVSlotT> outVec(extent);
     IndexT idx = 0;
     for (auto & cell : outVec) {
-      cell = raw[base + idx++];
+      cell = getRaw(base + idx++);
     }
     return outVec;
   }
@@ -140,7 +128,7 @@ class BV {
   size_t appendSlots(vector<BVSlotT>& out,
 		     size_t bitEnd) const {
     size_t slotEnd = slotAlign(bitEnd);
-    out.insert(out.end(), raw, raw + slotEnd);
+    out.insert(out.end(), rawV.begin(), rawV.begin() + slotEnd);
     return slotEnd;
   }
 
@@ -152,7 +140,7 @@ class BV {
       }*/
     BV bvOr(this);
     for (size_t i = 0; i < nSlot; i++) {
-      bvOr.rawV[i] = raw[i] | bvR.raw[i];
+      bvOr.rawV[i] = getRaw(i) | bvR.getRaw(i);
     }
     return bvOr;
   }
@@ -165,7 +153,7 @@ class BV {
       }*/
 
     for (size_t i = 0; i < nSlot; i++) {
-      rawV[i] &= bvR.raw[i];
+      rawV[i] &= bvR.getRaw(i);
     }
     return *this;
   }
@@ -178,7 +166,7 @@ class BV {
       }*/
 
     for (size_t i = 0; i < nSlot; i++) {
-      rawV[i] |= bvR.raw[i];
+      rawV[i] |= bvR.getRaw(i);
     }
     return *this;
   }
@@ -187,7 +175,7 @@ class BV {
   BV operator~() {
     BV bvTilde(this);
     for (size_t i = 0; i < nSlot; i++) {
-      bvTilde.rawV[i] = ~raw[i];
+      bvTilde.rawV[i] = ~getRaw(i);
     }
     return bvTilde;
   }
@@ -231,19 +219,19 @@ class BV {
 
      @return length of containing aligned quantity in buffer units.
    */
-  static inline size_t slotAlign(size_t len) {
+  static size_t slotAlign(size_t len) {
     return (len + slotElts - 1) / slotElts;
   }
 
 
-  static inline size_t strideBytes(size_t len) {
+  static size_t strideBytes(size_t len) {
     return slotAlign(len) * sizeof(BVSlotT);
   }
 
   /**
      @return length of aligned row in bits.
    */
-  static inline size_t Stride(size_t len) {
+  static size_t Stride(size_t len) {
     return slotElts * slotAlign(len);
   }
 
@@ -257,7 +245,7 @@ class BV {
 
      @return slot containing position.
    */
-  static inline size_t slotMask(size_t pos,
+  static size_t slotMask(size_t pos,
 				BVSlotT& mask) {
     size_t slot = pos / slotElts;
     mask = full << (pos - (slot * slotElts));
@@ -267,7 +255,7 @@ class BV {
 
 
   bool test(size_t slot, BVSlotT mask) const {
-    return (raw[slot] & mask) == mask;
+    return (getRaw(slot) & mask) == mask;
   }
 
   
@@ -280,7 +268,7 @@ class BV {
 
      @return true iff bit position is set in the bit vector.
    */
-  inline bool testBit(size_t pos) const {
+  bool testBit(size_t pos) const {
     BVSlotT mask;
     size_t slot = slotMask(pos, mask);
 
@@ -295,7 +283,7 @@ class BV {
 
      @param on indicates whether to set the bit on/off.
    */
-  inline void setBit(size_t pos,
+  void setBit(size_t pos,
 		     bool on = true) {
     BVSlotT mask;
     size_t slot = slotMask(pos, mask);
@@ -304,14 +292,14 @@ class BV {
   }
 
   
-  inline void setSlot(size_t slot, BVSlotT val) {
+  void setSlot(size_t slot, BVSlotT val) {
     rawV[slot] = val;
   }
 
   /**
      @brief Sets all slots to zero.
    */
-  inline void clear() {
+  void clear() {
     fill(rawV.begin(), rawV.end(), 0ul);
   }
 
@@ -319,7 +307,7 @@ class BV {
   /**
      @brief Sets all slots high.
    */
-  inline void saturate() {
+  void saturate() {
     fill(rawV.begin(), rawV.end(), allOnes);
   }
 };
@@ -372,12 +360,12 @@ class BitMatrix : public BV {
   ~BitMatrix();
 
 
-  inline auto getNRow() const {
+  auto getNRow() const {
     return nRow;
   }
 
 
-  inline size_t getStride() const {
+  size_t getStride() const {
     return stride;
   }
 
@@ -387,26 +375,26 @@ class BitMatrix : public BV {
 
      @return whether bit at specified coordinate is set.
    */
-  inline bool testBit(unsigned int row, IndexT col) const {
+  bool testBit(unsigned int row, IndexT col) const {
     return stride == 0 ? false : BV::testBit(row * stride + col);
   }
 
   
-  inline void setBit(unsigned int row,
+  void setBit(unsigned int row,
 		     IndexT col,
 		     bool on = true) {
     BV::setBit(row * stride + col, on);
   }
 
 
-  inline void clearBit(unsigned int row, IndexT col) {
+  void clearBit(unsigned int row, IndexT col) {
     setBit(row, col, false);
   }
 };
 
 
 /**
-   @brief Jagged bit matrix, caches extent vector.
+   @brief Jagged bit matrix.
  */
 class BVJagged : public BV {
   const vector<size_t> rowHeight;
@@ -434,7 +422,7 @@ public:
      @return true iff bit set.
 
    */
-  inline bool testBit(size_t row, size_t pos) const {
+  bool testBit(size_t row, size_t pos) const {
     BVSlotT mask;
     size_t slot = slotMask(pos, mask);
     size_t base = row == 0 ? 0 : rowHeight[row-1];

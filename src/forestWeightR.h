@@ -1,4 +1,4 @@
-// Copyright (C)  2012-2023  Mark Seligman
+// Copyright (C)  2012-2024  Mark Seligman
 //
 // This file is part of RboristBase.
 //
@@ -33,9 +33,9 @@ using namespace Rcpp;
    @brief Entry from R.
  */
 RcppExport SEXP forestWeightRcpp(const SEXP sTrain,
-				 const SEXP sSampler,
-				 const SEXP sPredict,
-				 const SEXP sArgs);
+		      const SEXP sSampler,
+		      const SEXP sPredict,
+		      const SEXP sArgs);
 
 
 struct ForestWeightR {

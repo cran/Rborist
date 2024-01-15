@@ -19,7 +19,6 @@
 
 #include "bv.h"
 #include "typeparam.h"
-#include "forest.h"
 #include "decnode.h"
 #include "samplemap.h"
 
@@ -31,15 +30,25 @@
 */
 class PreTree {
   static IndexT leafMax; // User option:  maximum # leaves, if > 0.
-  IndexT leafCount; // Running count of leaves.
   vector<DecNode> nodeVec; // Vector of tree nodes.
   vector<double> scores;
-  vector<double> infoLocal; //< Per-predictor split information.
-  vector<double> infoNode; ///< Per-node " ".  Leaf merging onlye.
   BV splitBits; // Bit encoding of factor splits.
   BV observedBits; // Bit encoding of factor values.
   size_t bitEnd; // Next free slot in either bit vector.
+  IndexT leafCount; // Running count of leaves.
+  vector<double> infoLocal; //< Per-predictor split information.
+  vector<double> infoNode; ///< Per-node " ".  Leaf merging onlye.
   SampleMap terminalMap;
+
+
+  /**
+     @brief Consumes each criterion in a collection.
+
+     @param critVec collects splits defining criteria.
+   */
+  void consumeCriteria(const class SplitFrontier* sf,
+		       const vector<class SplitNux>& critVec);
+
 
   /**
      @brief Enumerates leaves.
@@ -52,6 +61,8 @@ class PreTree {
    */
   void setLeafIndices();
 
+
+  
  public:
   /**
    */
@@ -83,17 +94,6 @@ class PreTree {
    */
   void consumeCompound(const class SplitFrontier* sf,
 		       const vector<vector<SplitNux>>& nuxMax);
-
-  
-  /**
-     @brief Consumes each criterion in a collection.
-
-     @param critVec collects splits defining criteria.
-
-     @param compound is true iff collection is compound.
-   */
-  void consumeCriteria(const class SplitFrontier* sf,
-		       const vector<class SplitNux>& critVec);
 
 
   /**
@@ -137,13 +137,19 @@ class PreTree {
 
      @return leaf map from consumed frontier.
   */
-  void consume(class Train* train,
-	       Forest *forest,
-	       struct Leaf* leaf) const;
+  void consume(class Grove* train) const;
 
 
-  void setScore(const class SplitFrontier* sf,
-		const class IndexSet& iSet);
+  /**
+     @brief Sets score at index to value passed.
+   */
+  void setScore(const class IndexSet& iSet,
+		double score);
+
+  
+  double getScore(IndexT idx) const {
+    return scores[idx];
+  }
 
 
   /**
@@ -158,7 +164,8 @@ class PreTree {
 
      @param smTerminal is the terminal map produce by Frontier.
    */
-  void setTerminals(SampleMap smTerminal);
+  void setTerminals(const class SampledObs* sampledObs,
+		    SampleMap smTerminal);
   
 
   /**
@@ -167,27 +174,27 @@ class PreTree {
   void leafMerge();
   
 
-  inline IndexT getHeight() const {
+  IndexT getHeight() const {
     return nodeVec.size();
   }
   
 
-  inline void resetTerminal(IndexT ptId) {
+  void resetTerminal(IndexT ptId) {
     nodeVec[ptId].resetTerminal();
   }
 
   
-  inline IndexT getIdTrue(IndexT ptId) const {
+  IndexT getIdTrue(IndexT ptId) const {
     return nodeVec[ptId].getIdTrue(ptId);
   }
 
   
-  inline IndexT getIdFalse(IndexT ptId) const {
+  IndexT getIdFalse(IndexT ptId) const {
     return nodeVec[ptId].getIdFalse(ptId);
   }
 
 
-  inline IndexT getSuccId(IndexT ptId, bool senseTrue) const {
+  IndexT getSuccId(IndexT ptId, bool senseTrue) const {
     return senseTrue ? nodeVec[ptId].getIdTrue(ptId) : nodeVec[ptId].getIdFalse(ptId);
   }
 
@@ -195,7 +202,7 @@ class PreTree {
   /**
      @brief Obtains true and false branch target indices.
    */
-  inline void getSuccTF(IndexT ptId,
+  void getSuccTF(IndexT ptId,
                         IndexT& ptLeft,
                         IndexT& ptRight) const {
     ptLeft = nodeVec[ptId].getIdTrue(ptId);
@@ -206,12 +213,12 @@ class PreTree {
   /**
      @return true iff node is nonterminal.
    */
-  inline bool isNonterminal(IndexT ptId) const {
+  bool isNonterminal(IndexT ptId) const {
     return nodeVec[ptId].isNonterminal();
   }
 
 
-  inline IndexT getDelIdx(IndexT ptId) const {
+  IndexT getDelIdx(IndexT ptId) const {
     return nodeVec[ptId].getDelIdx();
   }
 
@@ -219,7 +226,7 @@ class PreTree {
   /**
      @brief Obtains leaf index of node assumed to be nonterminal.
    */
-  inline IndexT getLeafIdx(IndexT ptIdx) const {
+  IndexT getLeafIdx(IndexT ptIdx) const {
     return nodeVec[ptIdx].getLeafIdx();
   }
 
@@ -232,13 +239,18 @@ class PreTree {
 
        @return true iff node has two leaf children.
     */
-  inline bool isMergeable(IndexT ptId) const {
+  bool isMergeable(IndexT ptId) const {
     return !isNonterminal(getIdTrue(ptId)) && !isNonterminal(getIdFalse(ptId));
   }
 
 
   DecNode& getNode(IndexT ptId) {
     return nodeVec[ptId];
+  }
+
+  
+  const SampleMap& getTerminalMap() const {
+    return terminalMap;
   }
   
 
@@ -249,7 +261,7 @@ class PreTree {
 
      @param nCrit is the number of criteria in the block; zero iff block preallocated.
   */
-  inline void offspring(IndexT nCrit, bool root = false) {
+  void offspring(IndexT nCrit, bool root = false) {
     if (nCrit > 0 || root) {
       DecNode node;
       nodeVec.insert(nodeVec.end(), nCrit + 1, node);

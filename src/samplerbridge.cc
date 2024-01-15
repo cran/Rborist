@@ -14,8 +14,10 @@
  */
 
 #include "samplerbridge.h"
+#include "predictbridge.h"
+#include "forestbridge.h"
 #include "sampler.h"
-#include "samplerrw.h"
+#include "rleframe.h"
 
 #include <memory>
 using namespace std;
@@ -31,53 +33,64 @@ size_t SamplerBridge::getNSamp() const {
 }
 
 
-unsigned int SamplerBridge::getNTree() const {
-  return sampler->getNTree();
+unsigned int SamplerBridge::getNRep() const {
+  return sampler->getNRep();
 }
 
 
 SamplerBridge::SamplerBridge(size_t nSamp,
 			     size_t nObs,
-			     unsigned int nTree,
+			     unsigned int nRep,
 			     bool replace,
-			     const double weight[]) {
+			     const vector<double>& weight,
+			     size_t nHoldout,
+			     const vector<size_t>& undefined) {
   SamplerNux::setMasks(nObs);
-  sampler = make_unique<Sampler>(nSamp, nObs, nTree, replace, weight);
+  sampler = make_unique<Sampler>(nSamp, nObs, nRep, replace, weight, nHoldout, undefined);
 }
 
 
-SamplerBridge::SamplerBridge(const vector<double>& yTrain,
+SamplerBridge::SamplerBridge(vector<double> yTrain,
 			     size_t nSamp,
 			     unsigned int nTree,
-			     const double samples[],
-			     bool bagging) {
+			     const double samples[]) {
   SamplerNux::setMasks(yTrain.size());
-  vector<vector<SamplerNux>> nux = SamplerRW::unpack(samples, nSamp, nTree);
-  sampler = make_unique<Sampler>(yTrain, std::move(nux), nSamp, bagging);
+  vector<vector<SamplerNux>> nux = SamplerNux::unpack(samples, nSamp, nTree);
+  sampler = make_unique<Sampler>(yTrain, nSamp, std::move(nux));
 }
 
 
-SamplerBridge::SamplerBridge(const vector<unsigned int>& yTrain,
+SamplerBridge::SamplerBridge(vector<double> yTrain,
 			     size_t nSamp,
 			     unsigned int nTree,
 			     const double samples[],
+			     unique_ptr<RLEFrame> rleFrame) {
+  SamplerNux::setMasks(yTrain.size());
+  vector<vector<SamplerNux>> nux = SamplerNux::unpack(samples, nSamp, nTree);
+  sampler = make_unique<Sampler>(yTrain, std::move(nux), nSamp, std::move(rleFrame));
+}
+
+
+SamplerBridge::SamplerBridge(vector<unsigned int> yTrain,
+			     size_t nSamp,
+			     unsigned int nTree,
+			     const double samples[],
+			     unsigned int nCtg) {
+  SamplerNux::setMasks(yTrain.size());
+  vector<vector<SamplerNux>> nux = SamplerNux::unpack(samples, nSamp, nTree, nCtg);
+  sampler = make_unique<Sampler>(yTrain, nSamp, std::move(nux), nCtg);
+}
+
+
+SamplerBridge::SamplerBridge(vector<unsigned int> yTrain,
 			     unsigned int nCtg,
-			     const vector<double>& classWeight) {
-  SamplerNux::setMasks(yTrain.size());
-  vector<vector<SamplerNux>> nux = SamplerRW::unpack(samples, nSamp, nTree, nCtg);
-  sampler = make_unique<Sampler>(yTrain, nSamp, std::move(nux), nCtg, classWeight);
-}
-
-
-SamplerBridge::SamplerBridge(const vector<unsigned int>& yTrain,
-			     unsigned int nCtg,
 			     size_t nSamp,
 			     unsigned int nTree,
 			     const double samples[],
-			     bool bagging) {
+			     unique_ptr<RLEFrame> rleFrame) {
   SamplerNux::setMasks(yTrain.size());
-  vector<vector<SamplerNux>> nux = SamplerRW::unpack(samples, nSamp, nTree, nCtg);
-  sampler = make_unique<Sampler>(yTrain, std::move(nux), nSamp, nCtg, bagging);
+  vector<vector<SamplerNux>> nux = SamplerNux::unpack(samples, nSamp, nTree, nCtg);
+  sampler = make_unique<Sampler>(yTrain, std::move(nux), nSamp, nCtg, std::move(rleFrame));
 }
 
 
@@ -86,7 +99,7 @@ SamplerBridge::SamplerBridge(size_t nObs,
 			     size_t nSamp,
 			     unsigned int nTree) {
   SamplerNux::setMasks(nObs);
-  sampler = make_unique<Sampler>(nObs, nSamp, SamplerRW::unpack(samples, nSamp, nTree));
+  sampler = make_unique<Sampler>(nObs, nSamp, SamplerNux::unpack(samples, nSamp, nTree));
 }
 
 
@@ -95,9 +108,7 @@ SamplerBridge::SamplerBridge(SamplerBridge&& sb) :
 }
 
 
-SamplerBridge::~SamplerBridge() {
-  SamplerNux::unsetMasks();
-}
+SamplerBridge::~SamplerBridge() = default;
 
 
 void SamplerBridge::sample() {
@@ -110,6 +121,11 @@ Sampler* SamplerBridge::getSampler() const {
 }
 
 
+Predict* SamplerBridge::getPredict() const {
+  return sampler->getPredict();
+}
+
+
 size_t SamplerBridge::getNuxCount() const {
   return sampler->crescCount();
 }
@@ -117,4 +133,21 @@ size_t SamplerBridge::getNuxCount() const {
 
 void SamplerBridge::dumpNux(double nuxOut[]) const {
   sampler->dumpNux(nuxOut);
+}
+
+
+bool SamplerBridge::categorical() const {
+  return sampler->getNCtg() > 0;
+}
+
+
+unique_ptr<PredictRegBridge> SamplerBridge::predictReg(ForestBridge& forestBridge,
+					   vector<double> yTest)  const {
+  return PredictRegBridge::predict(getSampler(), forestBridge.getForest(), yTest);
+}
+
+
+unique_ptr<PredictCtgBridge> SamplerBridge::predictCtg(ForestBridge& forestBridge,
+					   vector<unsigned int> yTest) const {
+  return PredictCtgBridge::predict(getSampler(), forestBridge.getForest(), yTest);
 }

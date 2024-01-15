@@ -18,22 +18,26 @@
 #define FOREST_QUANT_H
 
 #include "typeparam.h"
+#include "prediction.h"
 #include "valrank.h"
-#include "leaf.h" // RankCount definition only.
+#include "leaf.h"
 
 #include <vector>
 
+class Predict;
+class Sampler;
+struct ForestPredictReg;
 
 /**
  @brief Quantile signature.
 */
 class Quant {
   static const unsigned int binSize; // # slots to track.
-  const vector<double> quantile; // quantile values over which to predict.
-  const unsigned int qCount; // caches quantile size for quick reference.
-  const class Sampler* sampler;
-  const struct Leaf* leaf;
+  static vector<double> quantile; ///< quantile values over which to predict.
+  const Leaf& leaf;
   const bool empty; // if so, leave vectors empty and bail.
+  const unsigned int qCount; ///< caches quantile size for quick reference.
+  const bool trapAndBail; ///< Whether nonterminal exit permitted.
   const vector<vector<IndexRange>> leafDom;
   const RankedObs<double> valRank;
   const vector<vector<vector<RankCount>>> rankCount; // forest-wide, by sample.
@@ -41,8 +45,8 @@ class Quant {
   const vector<double> binMean;
   vector<double> qPred; // predicted quantiles.
   vector<double> qEst; // quantile of response estimates.
-
   
+
   /**
      @brief Computes a bin offset for a given rank.
 
@@ -50,7 +54,7 @@ class Quant {
 
      @return bin offset.
    */
-  inline unsigned int binRank(unsigned int rank) const {
+  unsigned int binRank(unsigned int rank) const {
     return rank >> rankScale;
   }
 
@@ -86,11 +90,11 @@ n     @brief Bins response means.
 
      @param[out] qRow[] outputs the derived quantiles.
    */
-  void quantSamples(const class PredictReg* predictReg,
+  void quantSamples(const ForestPredictionReg* prediction,
 		    const vector<IndexT>& sCount,
 		    const vector<double>& threshold,
 		    IndexT totSample,
-		    size_t row);
+		    size_t obsIdx);
   
 
   /**
@@ -115,19 +119,24 @@ public:
 
      Parameters mirror simililarly-named members.
    */
-  Quant(const class Forest* forest,
-	const struct Leaf* leaf,
-	const class Predict* predict,
-	const class ResponseReg* response,
-        const vector<double>& quantile_);
+  Quant(const Sampler* sampler,
+	const Predict* predict,
+	bool reportAuxiliary);
+
 
   ~Quant() = default;
   
 
+  static void init(vector<double> quantile_);
+
+
+  static void deInit();
+
+
   /**
      @brief Determines whether to bail on quantile estimation.
    */
-  inline bool isEmpty() const {
+  bool isEmpty() const {
     return empty;
   };
 
@@ -147,7 +156,7 @@ public:
 
      @return vector of quantile predictions.
    */
-  const vector<double> getQPred() const {
+  const vector<double>& getQPred() const {
     return qPred;
   }
   
@@ -157,7 +166,7 @@ public:
 
      @return pointer to base of estimand quantiles.
    */
-  const vector<double> getQEst() const {
+  const vector<double>& getQEst() const {
     return qEst;
   }
   
@@ -167,8 +176,9 @@ public:
 
      @param row is the row over which to build prediction quantiles.
   */
-  void predictRow(const class PredictReg* predictReg,
-		  size_t row);
+  void predictRow(const Predict* predict,
+		  const ForestPredictionReg* prediction,
+		  size_t obsIdx);
 };
 
 #endif

@@ -1,4 +1,4 @@
-// Copyright (C)  2012-2023   Mark Seligman
+// Copyright (C)  2012-2024   Mark Seligman
 //
 // This file is part of RboristBase.
 //
@@ -26,8 +26,6 @@
 
 #include "resizeR.h"
 #include "leafbridge.h"
-#include "samplerR.h"
-#include "samplerbridge.h"
 #include "leafR.h"
 
 const string LeafR::strExtent = "extent";
@@ -60,70 +58,12 @@ void LeafR::bridgeConsume(const LeafBridge& bridge,
   indexTop += indexSize;
 }
 
-
+// [[Rcpp::export]]
 List LeafR::wrap() {
-  BEGIN_RCPP
-
   List leaf = List::create(_[strExtent] = std::move(extent),
 			   _[strIndex] = std::move(index)
 			);
   leaf.attr("class") = "Leaf";
 
   return leaf;
-  END_RCPP
-}
-
-
-LeafBridge LeafR::unwrap(const List& lTrain,
-				     const SamplerBridge& samplerBridge) {
-  List lLeaf((SEXP) lTrain["leaf"]);
-  bool empty = (Rf_isNull(lLeaf[strIndex]) || Rf_isNull(lLeaf[strExtent]));
-  bool thin = empty || as<NumericVector>(lLeaf[strExtent]).length() == 0;
-  return LeafBridge(samplerBridge, thin,
-		    empty ? nullptr : as<NumericVector>(lLeaf[strExtent]).begin(),
-		    empty ? nullptr : as<NumericVector>(lLeaf[strIndex]).begin());
-}
-
-
-LeafExpandReg LeafExpandReg::unwrap(const List& lTrain) {
-  List lSampler((SEXP) lTrain["sampler"]);
-  return LeafExpandReg(lSampler);
-}
- 
-
-/**
-   @brief Constructor instantiates leaves for export only:
-   no prediction.
- */
-LeafExpandReg::LeafExpandReg(const List& lSampler) :
-  LeafExpand(lSampler) {
-}
-
-LeafExpandReg::~LeafExpandReg() = default;
-
-
-LeafExpandCtg LeafExpandCtg::unwrap(const List &lTrain) {
-  List lSampler((SEXP) lTrain["sampler"]);
-  return LeafExpandCtg(lSampler);
-}
-
-
-LeafExpandCtg::~LeafExpandCtg() = default;
-
-
-LeafExpand::LeafExpand(const List& lSampler) :
-  nTree(as<int>(lSampler["nTree"])),
-  rowTree(vector<vector<size_t> >(nTree)),
-  sCountTree(vector<vector<unsigned int> >(nTree)),
-  extentTree(vector<vector<unsigned int> >(nTree)),
-  scoreTree(vector<vector<double>>(nTree)) {
-}
-
-
-/**
-   @brief Constructor caches front-end vectors and instantiates a Leaf member.
- */
-LeafExpandCtg::LeafExpandCtg(const List& lSampler) :
-  LeafExpand(lSampler),
-  levelsTrain(CharacterVector(as<IntegerVector>(lSampler[SamplerR::strYTrain]).attr("levels"))) {
 }

@@ -6,15 +6,15 @@
  */
 
 /**
-   @file trainrf.h
+   @file fetrain.h
 
-   @brief RF-specific training initialization.
+   @brief Core handshake with training bridge.
 
    @author Mark Seligman
  */
 
-#ifndef RF_RFTRAIN_H
-#define RF_RFTRAIN_H
+#ifndef FOREST_FETRAIN_H
+#define FOREST_FETRAIN_H
 
 #include "typeparam.h"
 
@@ -25,7 +25,44 @@
    @brief Interface class for front end.  Holds simulation-specific parameters
    of the data and constructs forest, leaf and diagnostic structures.
 */
-struct RfTrain {
+struct FETrain {
+
+  /**
+     @brief Booster stat initializer for independent trees.
+
+     @param loss names the loss function.
+
+     @param scorer names the forest scoring function.
+   */
+  static void initBooster(const string& loss,
+			  const string& scorer);
+
+
+  /**
+     @brief Booster state initializer for sequential trees.
+
+     @param loss names the loss function.
+
+     @param scorer names the forest scoring function.
+
+     @param nu is the learning rate.
+
+     @param trackFit is true iff fit reported for each tree.
+
+     @param stopLag specifies # following local fit minimum.
+   */
+  static void initBooster(const string& loss,
+			  const string& scorer,
+			  double nu,
+			  bool trackFit,
+			  unsigned int stopLag);
+
+
+  /**
+     @brief Initializes node scorer.
+   */
+  static void initNodeScorer(const string& scorer);
+
 
   /**
      @brief Registers per-node probabilities of predictor selection.
@@ -70,6 +107,37 @@ struct RfTrain {
   */
   static void initMono(const class PredictorFrame* frame,
                        const vector<double> &regMono);
+
+
+  static void initGrove(bool thinLeaves,
+			unsigned int trainBlock);
+
+\
+  /**
+     @brief Allows DecNode to set its mask widths.
+   */
+  static void initDecNode(unsigned int nPred);
+
+
+  /**
+     @brief Sets training weights.
+   */
+  static void initSamples(vector<double> obsWeight);
+
+
+  /**
+     @brief Sets training weights.
+   */
+  static void initCtg(vector<double> classWeight);
+
+  
+  /**
+     @brief Copies contents of the score descriptor.
+   */
+  static void listScoreDesc(double& nu,
+			   double& baseScore,
+			   string& forestScore);
+
 
   /**
      @brief Static de-initializer.

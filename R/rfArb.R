@@ -1,4 +1,4 @@
-# Copyright (C)  2012-2023   Mark Seligman
+# Copyright (C)  2012-2024   Mark Seligman
 ##
 ## This file is part of Rborist.
 ##
@@ -32,6 +32,7 @@ rfArb.default <- function(x,
                 maxLeaf = 0,
                 minInfo = 0.01,
                 minNode = if (is.factor(y)) 2 else 3,
+                nHoldout = 0,
                 nLevel = 0,
                 nSamp = 0,
                 nThread = 0,
@@ -43,49 +44,37 @@ rfArb.default <- function(x,
                 quantVec = NULL,
                 quantiles = !is.null(quantVec),
                 regMono = NULL,
-                rowWeight = NULL,
+                rowWeight = numeric(0),
+                samplingWeight = numeric(0),
                 splitQuant = NULL,
-                thinLeaves = is.factor(y) && !indexing,
+                streamline = FALSE,
+                thinLeaves = streamline || (is.factor(y) && !indexing),
                 trapUnobserved = FALSE,
                 treeBlock = 1,
                 verbose = FALSE,
                 withRepl = TRUE,
                 ...) {
-  # Argument checking:
-
-    if (nThread < 0)
-        stop("Thread count must be nonnegative")
-    
-    if (any(is.na(y)))
-        stop("NA not supported in response")
-
-    if (!is.numeric(y) && !is.factor(y))
-        stop("Expecting numeric or factor response")
-
-    if (impPermute < 0)
-        warning("Negative permutation count:  ignoring.")
-
-    if (impPermute > 1)
-        warning("Permutation count limited to one.")
-    
-    if (impPermute > 0 && noValidate)
-        warning("Variable importance requires validation:  ignoring")
-    
-  # Quantile constraints:  regression only
-    if (quantiles && is.factor(y))
-        stop("Quantiles supported for regression case only")
-    if (quantiles && thinLeaves)
-        stop("Thin leaves insufficient for deriving quantiles.")
-    
-    if (!is.null(quantVec)) {
-        if (any(quantVec > 1) || any(quantVec < 0))
-            stop("Quantile range must be within [0,1]")
-        if (any(diff(quantVec) <= 0))
-            stop("Quantile range must be increasing")
+    if (nThread < 0) {
+        warning("Thread count must be nonnegative:  substituting zero.")
+        nThread <- 0
     }
 
+    if (length(rowWeight) > 0) {
+        warning("rowWeight will be deprecated.  Please use equivalent option 'samplingWeight'.")
+        if (length(samplingWeight) > 0) {
+            samplingWeight <- rowWeight
+        }
+    }
+    
+    
+  # Disables quantile prediction when not supported:
+    if (quantiles && thinLeaves) {
+        warning("Disabling quantile validation:  thin leaves insufficient.")
+        quantiles <- FALSE
+    }
+    
     preFormat <- preformat(x, verbose)
-    sampler <- presample(y, rowWeight, nSamp, nTree, withRepl, verbose)
+    sampler <- presample(y, nHoldout, samplingWeight, nSamp, nTree, withRepl, verbose)
     train <- rfTrain(preFormat, sampler, y,
                      autoCompress,
                      ctgCensus,
@@ -106,6 +95,8 @@ rfArb.default <- function(x,
 
     if (noValidate) {
         summaryValidate <- NULL
+        if (impPermute > 0)
+            warning("Permutation importance requires validation:  ignoring")
     }
     else {
         argPredict <- list(
@@ -138,7 +129,7 @@ postTrain <- function(sampler, train, summaryValidate, impPermute) {
         signature = train$signature
     )
 
-    # Consider caching train object and avoid copying its individual
+    # Consider caching train object ut avoid copying its individual
     # members:
     if (impPermute > 0) {
         arbOut <- list(
@@ -165,7 +156,7 @@ postTrain <- function(sampler, train, summaryValidate, impPermute) {
             validation = summaryValidate$validation
         )
     }
-    class(arbOut) <- "rfArb"
+    class(arbOut) <- c("rfArb", "arbTrain")
 
     arbOut
 }

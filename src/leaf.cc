@@ -18,54 +18,99 @@ PackedT RankCount::rankMask = 0;
 unsigned int RankCount::rightBits = 0;
 
 
-unique_ptr<Leaf> Leaf::train(IndexT nObs,
-			     bool thin) {
+unique_ptr<Leaf> Leaf::train(IndexT nObs) {
   RankCount::setMasks(nObs);
-  return make_unique<Leaf>(thin);
+  return make_unique<Leaf>();
 }
 
 
 unique_ptr<Leaf> Leaf::predict(const Sampler* sampler,
-			       bool thin,
 			       vector<vector<size_t>> extent,
 			       vector<vector<vector<size_t>>> index) {
-  RankCount::setMasks(sampler->getNObs());
-  return make_unique<Leaf>(sampler, thin, extent, index);
+  return make_unique<Leaf>(sampler, std::move(extent), std::move(index));
 }
 
 
-Leaf::Leaf(bool thin_)
-  : thin(thin_) {
+Leaf::Leaf() {
 }
 
 
 Leaf::Leaf(const Sampler* sampler,
-	   bool thin_,
 	   vector<vector<size_t>> extent_,
 	   vector<vector<vector<size_t>>> index_) :
-  thin(thin_),
-  extent(extent_),
-  index(index_) {
+  extent(std::move(extent_)),
+  index(std::move(index_)) {
+  RankCount::setMasks(sampler->getNObs());
 }
 
 
-Leaf::~Leaf() {
-  RankCount::unsetMasks();
+Leaf::~Leaf() = default;
+
+
+Leaf Leaf::unpack(const Sampler* sampler,
+		  const double extent_[],
+		  const double index_[]) {
+  vector<vector<size_t>> extent = unpackExtent(sampler, extent_);
+  vector<vector<vector<size_t>>> index = unpackIndex(sampler, extent, index_);
+  return Leaf(sampler, std::move(extent), std::move(index));
 }
 
 
-void Leaf::consumeTerminals(const PreTree* pretree,
-			    const SampleMap& terminalMap) {
-  if (thin)
-    return;
-  
+vector<vector<size_t>> Leaf::unpackExtent(const Sampler* sampler,
+					  const double extentNum[]) {
+  if (extentNum == nullptr) {
+    return vector<vector<size_t>>(0);
+  }
+
+  unsigned int nTree = sampler->getNRep();
+  vector<vector<size_t>> unpacked(nTree);
+  size_t idx = 0;
+  for (unsigned int tIdx = 0; tIdx < nTree; tIdx++) {
+    size_t extentTree = 0;
+    while (extentTree < sampler->getBagCount(tIdx)) {
+      size_t extentLeaf = extentNum[idx++];
+      unpacked[tIdx].push_back(extentLeaf);
+      extentTree += extentLeaf;
+    }
+  }
+  return unpacked;
+}
+
+
+vector<vector<vector<size_t>>> Leaf::unpackIndex(const Sampler* sampler,
+						 const vector<vector<size_t>>& extent,
+						 const double numVal[]) {
+  if (extent.empty() || numVal == nullptr)
+    return vector<vector<vector<size_t>>>(0);
+
+  unsigned int nTree = sampler->getNRep();
+  vector<vector<vector<size_t>>> unpacked(nTree);
+
+  size_t idx = 0;
+  for (unsigned int tIdx = 0; tIdx < nTree; tIdx++) {
+    unpacked[tIdx] = vector<vector<size_t>>(extent[tIdx].size());
+    for (size_t leafIdx = 0; leafIdx < unpacked[tIdx].size(); leafIdx++) {
+      vector<size_t> unpackedLeaf(extent[tIdx][leafIdx]);
+      for (size_t slot = 0; slot < unpackedLeaf.size(); slot++) {
+	unpackedLeaf[slot] = numVal[idx];
+	idx++;
+      }
+      unpacked[tIdx][leafIdx] = unpackedLeaf;
+    }
+  }
+  return unpacked;
+}
+
+
+void Leaf::consumeTerminals(const PreTree* pretree) {
+  const SampleMap& terminalMap = pretree->getTerminalMap();
   IndexT bagCount = terminalMap.sampleIndex.size();
   IndexT extentStart = extentCresc.size();
   IndexT idStart = indexCresc.size();
   IndexT nLeaf = terminalMap.range.size();
 
-  // Pre-grows extent and sample buffers for unordered writes.
-  indexCresc.insert(indexCresc.end(), bagCount, 0); // bag-count
+  // Pre-grows extent and index buffers for unordered writes.
+  indexCresc.insert(indexCresc.end(), bagCount, 0);
   extentCresc.insert(extentCresc.end(), nLeaf, 0);
 
   // Writes leaf extents for tree, unordered.
@@ -99,7 +144,7 @@ void Leaf::consumeTerminals(const PreTree* pretree,
 
 vector<vector<vector<size_t>>> Leaf::countLeafCtg(const Sampler* sampler,
 						  const ResponseCtg* response) const {
-  unsigned int nTree = sampler->getNTree();
+  unsigned int nTree = sampler->getNRep();
   vector<vector<vector<size_t>>> ctgCount(nTree);
   if (!sampler->hasSamples())
     return ctgCount;
@@ -129,7 +174,7 @@ vector<vector<vector<size_t>>> Leaf::countLeafCtg(const Sampler* sampler,
 
 vector<vector<vector<RankCount>>> Leaf::alignRanks(const class Sampler* sampler,
 						   const vector<IndexT>& obs2Rank) const {
-  unsigned int nTree = sampler->getNTree();
+  unsigned int nTree = sampler->getNRep();
   vector<vector<vector<RankCount>>> rankCount(nTree);
   if (!sampler->hasSamples())
     return rankCount;

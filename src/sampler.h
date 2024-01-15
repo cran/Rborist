@@ -17,7 +17,6 @@
 #define FOREST_SAMPLER_H
 
 #include "idcount.h"
-#include "bv.h"
 #include "typeparam.h"
 #include "sampledobs.h"
 #include "sample.h"
@@ -27,34 +26,37 @@
 
 using namespace std;
 
+class Predict;
+class Forest;
+class BitMatrix;
+class SamplerNux;
+class SampledObs;
+struct Response;
+
 
 class Sampler {
   // Experimental coarse-grained control of locality:  Not quite
   // coding-to-cache, but almost.
   static constexpr unsigned int locExp = 18;  // Log of locality threshold.
 
-  const unsigned int nTree;
+  const unsigned int nRep;
   const size_t nObs; ///< # training observations
-  const size_t nSamp;  ///< # samples requested per tree.
+  const vector<size_t> holdout; ///< Withheld indices; ordered.
 
-  const unique_ptr<struct Response> response;
+  // Presampling only:
+  bool replace; ///< Whether sampling with replacement.
+  const vector<size_t> omitMap; ///< Sequential holdout map.
+  vector<double> prob; ///< Sampling probabilities, post holdout.
+  const size_t nSamp;  ///< # samples per repitition.
+  bool trivial; ///< Shortcut.  NYI
+  vector<SamplerNux> sbCresc; ///< Crescent block.
+  unique_ptr<Sample::Walker<size_t>> walker; ///< Walker table.
+
+  const unique_ptr<Response> response;
+  const vector<vector<SamplerNux>> samples;
+  unique_ptr<Predict> predict; // Training, prediction only.
+
   
-  const vector<vector<class SamplerNux>> samples;
-  const unique_ptr<class BitMatrix> bagMatrix; // empty if training or prediction without bagging.
-
-  // Presampling only.
-  vector<SamplerNux> sbCresc; // Crescent block.
-  unique_ptr<Sample::Walker<size_t>> walker; // Walker table.
-  vector<double> weightNoReplace; // Non-replacement weights.
-  vector<size_t> coeffNoReplace; // Uniform non-replacement coefficients.
-
-
-  /**
-     @brief Constructs bag according to encoding.
-   */
-  unique_ptr<BitMatrix> bagRows(bool bagging);
-
-
   /**
      @brief Maps an index into its bin.
 
@@ -97,18 +99,20 @@ public:
   /**
      @brief Sampling constructor.
    */
-  Sampler(IndexT nSamp_,
-	  IndexT nObs_,
-	  unsigned int nTree_,
+  Sampler(size_t nSamp_,
+	  size_t nObs_,
+	  unsigned int nRep_,
 	  bool replace_,
-	  const double weight[]);
+	  const vector<double>& weight,
+	  size_t nHoldout,
+	  const vector<size_t>& undefined);
 
 
   /**
      @brief Generic constructor, no response.
    */
-  Sampler(IndexT nObs_,
-	  IndexT nSamp_,
+  Sampler(size_t nObs_,
+	  size_t nSamp_,
 	  const vector<vector<SamplerNux>>& samples_);
 
 
@@ -116,12 +120,11 @@ public:
      Classification constructor:  training.
    */
   Sampler(const vector<PredictorT>& yTrain,
-	  IndexT nSamp_,
+	  size_t nSamp_,
 	  vector<vector<SamplerNux>> nux,
-	  PredictorT nCtg,
-	  const vector<double>& classWeight_);
+	  PredictorT nCtg);
 
-  
+
   ~Sampler();
 
   
@@ -129,7 +132,7 @@ public:
      @brief Regression constructor: training.
    */
   Sampler(const vector<double>& yTrain,
-	  IndexT nSamp_,
+	  size_t nSamp_,
 	  vector<vector<SamplerNux>> nux);
 
 
@@ -138,9 +141,9 @@ public:
    */
   Sampler(const vector<PredictorT>& yTrain,
 	  vector<vector<SamplerNux>> samples_,
-	  IndexT nSamp_,
+	  size_t nSamp_,
 	  PredictorT nCtg,
-	  bool bagging);
+	  unique_ptr<struct RLEFrame> rleFrame);
 
 
   /**
@@ -148,8 +151,8 @@ public:
    */
   Sampler(const vector<double>& yTrain,
 	  vector<vector<SamplerNux>> samples_,
-	  IndexT nSamp_,
-	  bool bagging);
+	  size_t nSamp_,
+	  unique_ptr<struct RLEFrame> rleFrame);
 
 
   /**
@@ -172,7 +175,7 @@ public:
    */
   vector<IdCount> unpack(unsigned int tIdx) const {
     vector<IdCount> idCount;
-    IndexT obsIdx = 0;
+    size_t obsIdx = 0;
     for (SamplerNux nux : samples[tIdx]) {
       obsIdx += nux.getDelRow();
       idCount.emplace_back(obsIdx, nux.getSCount());
@@ -180,9 +183,15 @@ public:
 
     return idCount;
   }
-  
 
-  IndexT getExtent(unsigned int tIdx) const {
+
+  /**
+     @brief Constructs bag according to encoding.
+   */
+  unique_ptr<BitMatrix> makeBag(bool bagging) const;
+
+
+  size_t getExtent(unsigned int tIdx) const {
     return samples[tIdx].size();
   }
 
@@ -191,7 +200,7 @@ public:
      @brief Two-coordinat lookup of sample count.
    */
   IndexT getSCount(unsigned int tIdx,
-		   IndexT sIdx) const {
+		   size_t sIdx) const {
     return samples[tIdx][sIdx].getSCount();
   }
 
@@ -200,27 +209,27 @@ public:
      @brief As above, but row delta.
    */
   size_t getDelRow(unsigned int tIdx,
-		   IndexT sIdx) const {
+		   size_t sIdx) const {
     return samples[tIdx][sIdx].getDelRow();
   }
 
 
-  size_t getBagCount(unsigned int tIdx) const {
-    return samples[tIdx].size();
-  }
-  
-
-  bool isBagging() const {
-    return !bagMatrix->isEmpty();
+  /**
+     @brief Empty vector iff trivial:  nObs == nSamp.
+     
+     @return # unique samples at rep index.
+   */
+  size_t getBagCount(unsigned int repIdx) const {
+    return samples[repIdx].empty() ? nSamp : samples[repIdx].size();
   }
 
 
   /**
      @brief Passes through to Response method.
    */
-  unique_ptr<class SampledObs> rootSample(unsigned int tIdx) const;
+  unique_ptr<SampledObs> makeObs(unsigned int tIdx) const;
 
-
+  
   /**
      @brief Computes # records subsumed by sampling this block.
 
@@ -243,6 +252,12 @@ public:
   }
 
 
+  /**
+     @brief Passes through to response.
+   */
+  CtgT getNCtg() const;
+
+
   auto getNSamp() const {
     return nSamp;
   }
@@ -253,38 +268,70 @@ public:
   }
 
 
-  auto getNTree() const {
-    return nTree;
+  auto getNRep() const {
+    return nRep;
   }
 
+
+  Predict* getPredict() const {
+    return predict.get();
+  }
+
+
+  /**
+     @brief Derives a sample count appropriate for the sampling state.
+
+     @param nSpecified is the sample count specified by the user.
+
+     @return sample count appropriate for sampling state.
+   */
+  static size_t sampleCount(size_t nSpecified,
+			    size_t nObs,
+			    bool replace,
+			    const vector<size_t>& holdout,
+			    const vector<double>& prob);
+
+
+  /**
+     @return sorted vector of held-out and undefined indices.
+   */
+  static vector<size_t> makeHoldout(size_t nObs,
+				    size_t nHoldout,
+				    const vector<size_t>& undefined);
   
   /**
-     @brief Initializes coefficients specialized for sampling type.
-   */
-  void setCoefficients(const double weight[],
-		       bool replace);
+     @brief Normalizes probability vector and zeroes held-out indices.
 
-  
+     @param weight contains nonnormalized sampling weights.
+   */
+  static vector<double> makeProbability(const vector<double>& weight,
+					const vector<size_t>& holdout);
+
+
+  /**
+     @brief Removes held-out indices from sequential set.
+
+     @param nObs is the size of the full set.
+
+     @param holdout contains the held-out indices.
+
+     @param replace is true iff sampling with replacement.
+     
+     @return ordered index map into full index set.
+   */
+  static vector<size_t> makeOmitMap(size_t nObs,
+				    const vector<size_t>& holdout,
+				    bool replace);
+
+
   /**
      @brief Samples a single tree's worth of observations.
+
+     @param obsOmit are observations to omit from sampling.
    */
   void sample();
 
 
-  /**
-     @brief Determines whether a given forest coordinate is bagged.
-
-     @param tIdx is the tree index.
-
-     @param row is the row index.
-
-     @return true iff bagging and the coordinate bit is set.
-   */
-  inline bool isBagged(unsigned int tIdx, size_t row) const {
-    return !bagMatrix->isEmpty() && bagMatrix->testBit(tIdx, row);
-  }
-
-  
   /**
      @brief Indicates whether block can be used for enumeration.
 
@@ -303,6 +350,17 @@ public:
      @return vector of observation indices, counts.
    */
   vector<IdCount> obsExpand(const vector<SampleNux>& nuxen) const;
+
+
+  /**
+     @brief Pass-through to Predict member functions of the same name.
+   */
+  unique_ptr<struct SummaryReg> predictReg(Forest* forest,
+					   const vector<double>& yTest) const;
+
+
+  unique_ptr<struct SummaryCtg> predictCtg(Forest* forest,
+					   const vector<unsigned int>& yTest) const;
 };
 
 #endif

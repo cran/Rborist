@@ -14,16 +14,27 @@
  */
 
 #include "forest.h"
+#include "dectree.h"
 #include "forestbridge.h"
-#include "decnoderw.h"
-#include "forestrw.h"
+#include "samplerbridge.h"
 #include "typeparam.h"
 #include "bv.h"
+#include "leaf.h"
 
 using namespace std;
 
-ForestBridge::ForestBridge(unsigned int treeChunk) :
-  forest(make_unique<Forest>(treeChunk)) {
+
+ForestBridge::ForestBridge(unsigned int nTree,
+			   const double nodeExtent[],
+			   const complex<double> treeNode[],
+			   const double score[],
+			   const double facExtent[],
+                           const unsigned char facSplit[],
+			   const unsigned char facObserved[],
+			   const tuple<double, double, string>& scoreDesc,
+			   const SamplerBridge* samplerBridge) :
+  forest(make_unique<Forest>(DecTree::unpack(nTree, nodeExtent, treeNode, score, facExtent, facSplit, facObserved),
+			     scoreDesc, Leaf())) {
 }
 
 
@@ -34,13 +45,13 @@ ForestBridge::ForestBridge(unsigned int nTree,
 			   const double facExtent[],
                            const unsigned char facSplit[],
 			   const unsigned char facObserved[],
-			   unsigned int nPredStandalone) :
-  forest(make_unique<Forest>(DecNodeRW::unpackNodes(treeNode, nodeExtent, nTree),
-			     DecNodeRW::unpackScores(score, nodeExtent, nTree),
-			     DecNodeRW::unpackBits(facSplit, facExtent, nTree),
-			     DecNodeRW::unpackBits(facObserved, facExtent, nTree))) {
-  if (nPredStandalone != 0)
-    init(nPredStandalone);
+			   const tuple<double, double, string>& scoreDesc,
+			   const SamplerBridge* samplerBridge,
+			   const double extent[],
+			   const double index[]) :
+  forest(make_unique<Forest>(DecTree::unpack(nTree, nodeExtent, treeNode, score, facExtent, facSplit, facObserved),
+			     scoreDesc,
+			     Leaf::unpack(samplerBridge->getSampler(), extent, index))) {
 }
 
 
@@ -67,56 +78,17 @@ unsigned int ForestBridge::getNTree() const {
 }
 
 
-const vector<size_t>& ForestBridge::getNodeExtents() const {
-  return forest->getNodeExtents();
-}
-
-
-const vector<size_t>& ForestBridge::getFacExtents() const {
-  return forest->getFacExtents();
-}
-
-
 Forest* ForestBridge::getForest() const {
   return forest.get();
-}
-
-
-size_t ForestBridge::getFactorBytes() const {
-  return forest->getFactorBytes();
-}
-
-
-void ForestBridge::dumpTree(complex<double> treeOut[]) const {
-  forest->cacheNode(treeOut);
-}
-
-
-size_t ForestBridge::getNodeCount() const {
-  return forest->getNodeCount();
-}
-
-
-void ForestBridge::dumpScore(double scoreOut[]) const {
-  forest->cacheScore(scoreOut);
-}
-
-
-void ForestBridge::dumpFactorRaw(unsigned char facOut[]) const {
-  forest->cacheFacRaw(facOut);
-}
-
-
-void ForestBridge::dumpFactorObserved(unsigned char obsOut[]) const {
-  forest->cacheObservedRaw(obsOut);
 }
 
 
 void ForestBridge::dump(vector<vector<unsigned int> >& predTree,
                         vector<vector<double> >& splitTree,
                         vector<vector<size_t> >& lhDelTree,
-                        vector<vector<unsigned char> >& facSplitTree) const {
-  ForestRW::dump(forest.get(), predTree, splitTree, lhDelTree, facSplitTree);
+                        vector<vector<unsigned char> >& facSplitTree,
+			vector<vector<double>>& scoreTree) const {
+  return forest->dump(predTree, splitTree, lhDelTree, facSplitTree, scoreTree);
 }
 
     

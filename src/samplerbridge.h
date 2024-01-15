@@ -22,6 +22,9 @@
 
 using namespace std;
 
+class Sampler;
+class Predict;
+
 /**
    @brief Hides class Sampler internals from bridge via forward declarations.
  */
@@ -34,35 +37,46 @@ struct SamplerBridge {
 		size_t nSamp,
 		unsigned int nTree,
 		bool replace,
-		const double weight[]);
+		const vector<double>& weight,
+		size_t nHoldout,
+		const vector<size_t>& undefined);
+
 
   SamplerBridge(SamplerBridge&& sb);
 
 
   /**
-     @param bagging specifies a bagging matrix:  prediction only.
+     @brief Training constructor:  classification.
    */
-  SamplerBridge(const vector<double>& yTrain,
+  SamplerBridge(vector<unsigned int> yTrain,
 		size_t nSamp,
 		unsigned int nTree,
 		const double samples[],
-		bool bagging = false);
+		unsigned int nCtg);
 
+  
+  /**
+     @brief Training constuctor:  regression.
+   */
+  SamplerBridge(vector<double> yTrain,
+		size_t nSamp,
+		unsigned int nTree,
+		const double samples[]);
 
-  SamplerBridge(const vector<unsigned int>& yTrain,
+  SamplerBridge(vector<double> yTrain,
 		size_t nSamp,
 		unsigned int nTree,
 		const double samples[],
+		unique_ptr<struct RLEFrame> rleFrame);
+
+
+
+  SamplerBridge(vector<unsigned int> yTrain,
 		unsigned int nCtg,
-		const vector<double>& classWeight);
-
-
-  SamplerBridge(const vector<unsigned int>& yTrain,
-		unsigned int nCtg,
 		size_t nSamp,
 		unsigned int nTree,
 		const double samples[],
-		bool bagging = false);
+		unique_ptr<struct RLEFrame> rleFrame);
 
 
   /**
@@ -88,7 +102,11 @@ struct SamplerBridge {
 
      @return core sampler.
     */
-  class Sampler* getSampler() const;
+  Sampler* getSampler() const;
+
+
+  Predict* getPredict() const;
+  
 
   /**
      @brief Getter for number of training rows.
@@ -102,7 +120,7 @@ struct SamplerBridge {
   /**
      @brief Getter for number of trained trees.
    */
-  unsigned int getNTree() const;
+  unsigned int getNRep() const;
 
 
   size_t getNuxCount() const;
@@ -113,10 +131,25 @@ struct SamplerBridge {
    */
   void dumpNux(double nuxOut[]) const;
 
+
+  /**
+     @return true iff response is categorical.
+   */
+  bool categorical() const;
+
+
+  unique_ptr<struct PredictRegBridge> predictReg(struct ForestBridge&,
+						 vector<double> yTest) const;
+
+  
+  unique_ptr<struct PredictCtgBridge> predictCtg(struct ForestBridge&,
+						 vector<unsigned int> yTest) const;
+
+  
   
 private:
 
-  unique_ptr<class Sampler> sampler; // Core-level instantiation.
+  unique_ptr<Sampler> sampler; // Core-level instantiation.
 };
 
 

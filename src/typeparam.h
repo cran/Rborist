@@ -25,14 +25,13 @@
 using namespace std;
 
 // Type for caching front-end values, but not necessarily for arithmetic.
-typedef float FltVal;
+using FltVal = float;
 
 // Floating accumulator type, viz. arithmetic.
-typedef double FltAccum;
-
+using FltAccum = double;
 
 // Wide container type for packed values.
-typedef uint64_t PackedT;
+using PackedT = uint64_t;
 
 // Index type:  rows, samples, ranks, run counts.
 // Should be wide enough to accommodate values approaching #
@@ -43,16 +42,17 @@ typedef uint64_t PackedT;
 // Setting to size_t may also incur performance penalties, roughly
 // 5% more memory usage and 10% reduction in speed.
 //
-typedef unsigned int IndexT; 
+using IndexT = unsigned int;
 
 // Predictor type:  # columns.
 // Should accommodate values approaching # predictors.
-typedef unsigned int PredictorT;
+//
+using PredictorT = unsigned int;
 
 
 // Category cardinalities:  under construction.
-typedef unsigned int CtgT;
-
+//
+using CtgT = unsigned int;
 
 // Low/extent pair defining range of indices.
 struct IndexRange {
@@ -77,7 +77,7 @@ struct IndexRange {
 
      @return true iff extent has value zero.
    */
-  inline bool empty() const {
+  bool empty() const {
     return idxExtent == 0;
   }
 
@@ -126,14 +126,14 @@ struct IndexRange {
 };
 
 
-typedef unsigned char PathT;
+using PathT = unsigned char;
 
 /**
    @brief Template parametrization; specialization for double.
  */
 template<typename tn>
 bool areEqual(const tn& val1,
-	      const tn& val2) {
+		     const tn& val2) {
   return val1 == val2;
 }
 
@@ -141,8 +141,9 @@ bool areEqual(const tn& val1,
 /**
    @brief Double override to check for NaN.
  */
+template<>
 inline bool areEqual(const double& val1,
-	      const double& val2) {
+		     const double& val2) {
   return ((val1 == val2) || (isnan(val1) && isnan(val2)));
 }
 
