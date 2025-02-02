@@ -1,24 +1,24 @@
 % File man/predict.rfTrain.Rd
 % Part of the Rborist package
 
-\name{predict.arbTrain}
-\alias{predict.arbTrain}
-\title{predict method for arbTrain result}
+\name{predict.rfArb}
+\alias{predict.rfArb}
+\title{predict method for rfArb result}
 \description{
   Prediction and test using Rborist.
 }
 
 \usage{
-\method{predict}{arbTrain}(object, newdata, sampler, yTest=NULL,
+\method{predict}{rfArb}(object, newdata, sampler, yTest=NULL,
 keyedFrame = FALSE, quantVec=numeric(0), quantiles = length(quantVec) > 0,
 ctgCensus = "votes", indexing = FALSE, trapUnobserved = FALSE,
 bagging = FALSE, nThread = 0, verbose = FALSE, ...)
 }
 
 \arguments{
-  \item{object}{an object of class \code{arbTrain}, created from a
-    previous invocation of the command \code{rfArb}, \code{Rborist}
-    or \code{rfTrain} to train.}
+  \item{object}{an object of class \code{rfArb}, created from a
+    previous invocation of the command \code{rfArb} or \code{Rborist}
+    to train.}
   \item{newdata}{a design frame or matrix containing new data, with the
     same signature of predictors as in the training command.}
   \item{sampler}{an object of class \code{Sampler} used in the
@@ -102,7 +102,7 @@ bagging = FALSE, nThread = 0, verbose = FALSE, ...)
 
   pf <- preformat(x)
   sp <- presample(y)
-  rb <- arbTrain(pf, sp, y)
+  rb <- rfArb(pf, sp, y)
 
 
   # Performs separate prediction on new data:

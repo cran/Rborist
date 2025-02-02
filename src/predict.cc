@@ -171,7 +171,7 @@ void Predict::predictObs(ForestPrediction* prediction,
   OMPBound rowEnd = static_cast<OMPBound>(blockStart + span);
   OMPBound rowStart = static_cast<OMPBound>(blockStart);
 
-#pragma omp parallel default(shared) num_threads(OmpThread::nThread)
+#pragma omp parallel default(shared) num_threads(OmpThread::getNThread())
   {
 #pragma omp for schedule(dynamic, 1)
   for (OMPBound row = rowStart; row < rowEnd; row += seqChunk) {
@@ -237,7 +237,7 @@ vector<vector<unique_ptr<TestReg>>> SummaryReg::permute(const Predict* predict,
   for (PredictorT predIdx = 0; predIdx < rleFrame->getNPred(); predIdx++) {
     vector<RLEVal<szType>> rleTemp = std::move(rleFrame->rlePred[predIdx]);
     for (unsigned int rep = 0; rep != Predict::nPermute; rep++) {
-      rleFrame->rlePred[predIdx] = rleFrame->permute(predIdx, Sample::permute(rleFrame->getNRow()));
+      rleFrame->rlePred[predIdx] = rleFrame->permute(predIdx, Sample<size_t>::permute(rleFrame->getNRow()));
       unique_ptr<ForestPredictionReg> repReg = predict->forest->makePredictionReg(sampler, predict, false);
       testPermute[predIdx].emplace_back(repReg->test(yTest));
     }
@@ -259,7 +259,7 @@ vector<vector<unique_ptr<TestCtg>>> SummaryCtg::permute(const Predict* predict,
   for (PredictorT predIdx = 0; predIdx < rleFrame->getNPred(); predIdx++) {
     vector<RLEVal<szType>> rleTemp = std::move(rleFrame->rlePred[predIdx]);
     for (unsigned int rep = 0; rep != Predict::nPermute; rep++) {
-      rleFrame->rlePred[predIdx] = rleFrame->permute(predIdx, Sample::permute(rleFrame->getNRow()));
+      rleFrame->rlePred[predIdx] = rleFrame->permute(predIdx, Sample<size_t>::permute(rleFrame->getNRow()));
       unique_ptr<ForestPredictionCtg> repCtg = predict->forest->makePredictionCtg(sampler, predict, false);
       testPermute[predIdx].emplace_back(repCtg->test(yTest));
     }

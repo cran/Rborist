@@ -38,6 +38,7 @@ ul.task-list{list-style: none;}
 </style>
 
 
+
 <style type="text/css">
 code {
 white-space: pre;
@@ -118,13 +119,20 @@ code span.wa { color: #60a0b0; font-weight: bold; font-style: italic; }
   for (var i = 0; i < sheets.length; i++) {
     if (sheets[i].ownerNode.dataset["origin"] !== "pandoc") continue;
     try { var rules = sheets[i].cssRules; } catch (e) { continue; }
-    for (var j = 0; j < rules.length; j++) {
+    var j = 0;
+    while (j < rules.length) {
       var rule = rules[j];
       // check if there is a div.sourceCode rule
-      if (rule.type !== rule.STYLE_RULE || rule.selectorText !== "div.sourceCode") continue;
+      if (rule.type !== rule.STYLE_RULE || rule.selectorText !== "div.sourceCode") {
+        j++;
+        continue;
+      }
       var style = rule.style.cssText;
       // check if color or background-color is set
-      if (rule.style.color === '' && rule.style.backgroundColor === '') continue;
+      if (rule.style.color === '' && rule.style.backgroundColor === '') {
+        j++;
+        continue;
+      }
       // replace div.sourceCode by a pre.sourceCode rule
       sheets[i].deleteRule(j);
       sheets[i].insertRule('pre.sourceCode{' + style + '}', j);
@@ -375,7 +383,7 @@ coprocessors, such as GPUs.</p></li>
 and response vector, of conforming dimensions. For appropriately typed
 design <em>x</em> and response <em>y</em>, then, it suffices to
 call:</p>
-<div class="sourceCode" id="cb1"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a>  rs <span class="ot">&lt;-</span> <span class="fu">Rborist</span>(x, y)</span></code></pre></div>
+<div class="sourceCode" id="cb1"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb1-1"><a href="#cb1-1" tabindex="-1"></a>  rs <span class="ot">&lt;-</span> <span class="fu">Rborist</span>(x, y)</span></code></pre></div>
 <p>The design can be either a <em>data.frame</em>, a numeric matrix or
 an integer matrix. In the case of a frame, the columns (predictors)
 must, individually, have either numeric or factor value. Integer
@@ -396,14 +404,14 @@ samples.</p>
 include mean absolute and square errors, as well as the r-squared
 statistic. Continuing from the previous codelet, these are obtainable as
 follows:</p>
-<div class="sourceCode" id="cb2"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a>  rs<span class="sc">$</span>validation<span class="sc">$</span>mae</span>
-<span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a>  rs<span class="sc">$</span>validation<span class="sc">$</span>mse</span>
-<span id="cb2-3"><a href="#cb2-3" aria-hidden="true" tabindex="-1"></a>  rs<span class="sc">$</span>validation<span class="sc">$</span>rsq</span></code></pre></div>
+<div class="sourceCode" id="cb2"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb2-1"><a href="#cb2-1" tabindex="-1"></a>  rs<span class="sc">$</span>validation<span class="sc">$</span>mae</span>
+<span id="cb2-2"><a href="#cb2-2" tabindex="-1"></a>  rs<span class="sc">$</span>validation<span class="sc">$</span>mse</span>
+<span id="cb2-3"><a href="#cb2-3" tabindex="-1"></a>  rs<span class="sc">$</span>validation<span class="sc">$</span>rsq</span></code></pre></div>
 <p>These statistics are derived from the original training reponse
 (<em>y</em>, above) and the derived out-of-bag reponse. The out-of-bag
 response itself can also be obtained fromt the <em>validation</em>
 object:</p>
-<div class="sourceCode" id="cb3"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a>   rs<span class="sc">$</span>validation<span class="sc">$</span>yPred</span></code></pre></div>
+<div class="sourceCode" id="cb3"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb3-1"><a href="#cb3-1" tabindex="-1"></a>   rs<span class="sc">$</span>validation<span class="sc">$</span>yPred</span></code></pre></div>
 <p><em>validation</em> also contains member <em>qPred</em>, for use with
 quantile regression. This member will be described in the next
 section.</p>
@@ -433,7 +441,7 @@ do not directly convey summary information. An exception is the
 <em>training</em> member, which summarizes training statistics not
 directly related to validation. <em>training</em> currently has a single
 member, <em>info</em>:</p>
-<div class="sourceCode" id="cb4"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a>       rs<span class="sc">$</span>training<span class="sc">$</span>info</span></code></pre></div>
+<div class="sourceCode" id="cb4"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb4-1"><a href="#cb4-1" tabindex="-1"></a>       rs<span class="sc">$</span>training<span class="sc">$</span>info</span></code></pre></div>
 <p>For each predictor the <em>info</em> vector reports the sum, over all
 tree nodes in the forest for which the predictor defines a splitting
 condition, of the information value precipitating the respective split.
@@ -441,7 +449,7 @@ Although these values depend on the information metric employed, they do
 provide a relative measure of each predictor’s importance in the
 model.</p>
 <p>Validation can be suppressed as follows:</p>
-<div class="sourceCode" id="cb5"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a>       rs <span class="ot">&lt;-</span> <span class="fu">Rborist</span>(x, y, <span class="at">noValidate =</span> <span class="cn">TRUE</span>)</span></code></pre></div>
+<div class="sourceCode" id="cb5"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb5-1"><a href="#cb5-1" tabindex="-1"></a>       rs <span class="ot">&lt;-</span> <span class="fu">Rborist</span>(x, y, <span class="at">noValidate =</span> <span class="cn">TRUE</span>)</span></code></pre></div>
 <p>This option is primarily for the use of package maintainers, but may
 prove useful, for example, in instances when model fit is not a main
 concern. The <em>validation</em> field will then have value NULL.</p>
@@ -455,10 +463,10 @@ simply for the asking. Leaf information, by default, is rich enough to
 make their computation quite easy. Quantiles can be requested in either
 of two ways. The simplest is to set option <em>quantiles</em> to
 <em>TRUE</em>:</p>
-<div class="sourceCode" id="cb6"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a>       rs <span class="ot">&lt;-</span> <span class="fu">Rborist</span>(x, y, <span class="at">quantiles =</span> <span class="cn">TRUE</span>)</span></code></pre></div>
+<div class="sourceCode" id="cb6"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb6-1"><a href="#cb6-1" tabindex="-1"></a>       rs <span class="ot">&lt;-</span> <span class="fu">Rborist</span>(x, y, <span class="at">quantiles =</span> <span class="cn">TRUE</span>)</span></code></pre></div>
 <p>This default quantile vector consists of quartiles, which are given
 by the <em>qPred</em> member mentioned above:</p>
-<div class="sourceCode" id="cb7"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb7-1"><a href="#cb7-1" aria-hidden="true" tabindex="-1"></a>       rs<span class="sc">$</span>validation<span class="sc">$</span>qPred</span></code></pre></div>
+<div class="sourceCode" id="cb7"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb7-1"><a href="#cb7-1" tabindex="-1"></a>       rs<span class="sc">$</span>validation<span class="sc">$</span>qPred</span></code></pre></div>
 <p>Quantile prediction also estimates the quantile position at which the
 predicted mean, <em>yPred</em>, lies. This estimate is reported by the
 <em>qEst</em> value, as follow:</p>
@@ -466,19 +474,19 @@ predicted mean, <em>yPred</em>, lies. This estimate is reported by the
 <p>Explicity specfiying the quantile vector, <em>quantVec</em>, yields
 quantiles of any desired type. Deciles, for example, can be requested as
 follows:</p>
-<div class="sourceCode" id="cb8"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb8-1"><a href="#cb8-1" aria-hidden="true" tabindex="-1"></a>       rs <span class="ot">&lt;-</span> <span class="fu">Rborist</span>(x, y, <span class="at">quantVec =</span> <span class="fu">seq</span>(<span class="fl">0.1</span>, <span class="fl">1.0</span>, <span class="at">by=</span><span class="fl">0.1</span>))</span></code></pre></div>
+<div class="sourceCode" id="cb8"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb8-1"><a href="#cb8-1" tabindex="-1"></a>       rs <span class="ot">&lt;-</span> <span class="fu">Rborist</span>(x, y, <span class="at">quantVec =</span> <span class="fu">seq</span>(<span class="fl">0.1</span>, <span class="fl">1.0</span>, <span class="at">by=</span><span class="fl">0.1</span>))</span></code></pre></div>
 <p>The algorithm employed to compute the quantiles is approximate, as
 bining is employed to improve performance.</p>
 <p>If, on the other hand, when training a regression forest, quantiles
 are not desired and it is intended that quantiles will not subsequently
 be requested <em>after</em> training, space can be saved by representing
 leaves in a sparser form:</p>
-<div class="sourceCode" id="cb9"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb9-1"><a href="#cb9-1" aria-hidden="true" tabindex="-1"></a>       rs <span class="ot">&lt;-</span> <span class="fu">Rborist</span>(x, y, <span class="at">thinLeaves=</span><span class="cn">TRUE</span>)</span></code></pre></div>
+<div class="sourceCode" id="cb9"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb9-1"><a href="#cb9-1" tabindex="-1"></a>       rs <span class="ot">&lt;-</span> <span class="fu">Rborist</span>(x, y, <span class="at">thinLeaves=</span><span class="cn">TRUE</span>)</span></code></pre></div>
 <div id="tree-and-forest-size" class="section level2">
 <h2>Tree and forest size</h2>
 <p>The simplest way to affect forest size is to specify the number of
 trees. The following codelet requests 100 trees:</p>
-<div class="sourceCode" id="cb10"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb10-1"><a href="#cb10-1" aria-hidden="true" tabindex="-1"></a>       rs <span class="ot">&lt;-</span> <span class="fu">Rborist</span>(x, y, <span class="at">nTree=</span><span class="dv">100</span>)</span></code></pre></div>
+<div class="sourceCode" id="cb10"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb10-1"><a href="#cb10-1" tabindex="-1"></a>       rs <span class="ot">&lt;-</span> <span class="fu">Rborist</span>(x, y, <span class="at">nTree=</span><span class="dv">100</span>)</span></code></pre></div>
 <p>This also affects training time, which is expected to scale linearly
 with the number of trees.</p>
 <p>Training of individual trees can be constrained according to several
@@ -488,13 +496,13 @@ value of 1, for example, allows splitting to proceed until purity. A
 larger value results in a smaller tree, as well as faster training. To
 ensure that splitting does not proceed below a node size of 20, for
 example:</p>
-<div class="sourceCode" id="cb11"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb11-1"><a href="#cb11-1" aria-hidden="true" tabindex="-1"></a>       rs <span class="ot">&lt;-</span> <span class="fu">Rborist</span>(x, y, <span class="at">minNode=</span><span class="dv">20</span>)</span></code></pre></div>
+<div class="sourceCode" id="cb11"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb11-1"><a href="#cb11-1" tabindex="-1"></a>       rs <span class="ot">&lt;-</span> <span class="fu">Rborist</span>(x, y, <span class="at">minNode=</span><span class="dv">20</span>)</span></code></pre></div>
 <p>Another way to control tree size is to specify its maximal depth. The
 option <em>nLevel</em> sets an upper bound on the number of levels over
 which trees can be trained. The following codelet causes tree
 construction to halt after the root is created, resulting in a forest of
 singleton trees.</p>
-<div class="sourceCode" id="cb12"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb12-1"><a href="#cb12-1" aria-hidden="true" tabindex="-1"></a>       rs <span class="ot">&lt;-</span> <span class="fu">Rborist</span>(x, y, <span class="at">nLevel =</span> <span class="dv">1</span>)</span></code></pre></div>
+<div class="sourceCode" id="cb12"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb12-1"><a href="#cb12-1" tabindex="-1"></a>       rs <span class="ot">&lt;-</span> <span class="fu">Rborist</span>(x, y, <span class="at">nLevel =</span> <span class="dv">1</span>)</span></code></pre></div>
 <p>As with several other size-based constraints, constraining level
 depth also results in faster execution.</p>
 <p>Option <em>maxLeaf</em> limits the number of leaves (terminals)
@@ -502,12 +510,12 @@ present in a tree. Unlike other size constraints described so far,
 <em>maxLeaf</em> is enforced <em>after</em> training, so as not to bias
 tree shape. While this pruning operation is quite fast, then, limiting
 the number of leaves will not speed the training process.</p>
-<div class="sourceCode" id="cb13"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb13-1"><a href="#cb13-1" aria-hidden="true" tabindex="-1"></a>       rs <span class="ot">&lt;-</span> <span class="fu">Rborist</span>(x, y, <span class="at">maxLeaf =</span> <span class="dv">13</span><span class="er">}</span></span></code></pre></div>
+<div class="sourceCode" id="cb13"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb13-1"><a href="#cb13-1" tabindex="-1"></a>       rs <span class="ot">&lt;-</span> <span class="fu">Rborist</span>(x, y, <span class="at">maxLeaf =</span> <span class="dv">13</span><span class="er">}</span></span></code></pre></div>
 <p>Option <em>minInfo</em> sets a splitting threshold based on relative
 information gain. A splitting candidate is rejected if the ratio of
 information content between a node and its potential successors lies
 below the threshold.</p>
-<div class="sourceCode" id="cb14"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb14-1"><a href="#cb14-1" aria-hidden="true" tabindex="-1"></a>       rs <span class="ot">&lt;-</span> <span class="fu">Rborist</span>(x, y, <span class="at">minRatio =</span> <span class="fl">0.1</span>)</span></code></pre></div>
+<div class="sourceCode" id="cb14"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb14-1"><a href="#cb14-1" tabindex="-1"></a>       rs <span class="ot">&lt;-</span> <span class="fu">Rborist</span>(x, y, <span class="at">minRatio =</span> <span class="fl">0.1</span>)</span></code></pre></div>
 <p>This option should be applied with care and should probably be
 avoided at low predictor count.</p>
 <p>Performance as well as storage economy can in some cases both be
@@ -519,7 +527,7 @@ a <em>per-predictor</em> basis, representing high-frequency observations
 of a given predictor implicitly. A plurality threshold above which to
 compress repeated values is specified by the <em>autoCompress</em>
 option:</p>
-<div class="sourceCode" id="cb15"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb15-1"><a href="#cb15-1" aria-hidden="true" tabindex="-1"></a>       rs <span class="ot">&lt;-</span> <span class="fu">Rborist</span>(x, y, <span class="at">autoCompress =</span> <span class="fl">0.4</span>)</span></code></pre></div>
+<div class="sourceCode" id="cb15"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb15-1"><a href="#cb15-1" tabindex="-1"></a>       rs <span class="ot">&lt;-</span> <span class="fu">Rborist</span>(x, y, <span class="at">autoCompress =</span> <span class="fl">0.4</span>)</span></code></pre></div>
 <p>As <em>autoCompress</em> specifies a plurality threshold, only a
 single set of repeated values undergoes compression for a given
 predictor. Resolution of ties, in particular, is
@@ -533,9 +541,9 @@ a forest’s memory footprint. <em>Streamline</em> clears fields employed
 by validation, quantile regression and feature contribution, so should
 not be employed if any of these operations are expected to be performed
 subsequently.</p>
-<div class="sourceCode" id="cb16"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb16-1"><a href="#cb16-1" aria-hidden="true" tabindex="-1"></a>       rs <span class="ot">&lt;-</span> <span class="fu">Rborist</span>(x, y)</span>
-<span id="cb16-2"><a href="#cb16-2" aria-hidden="true" tabindex="-1"></a>       ...</span>
-<span id="cb16-3"><a href="#cb16-3" aria-hidden="true" tabindex="-1"></a>       rs <span class="ot">&lt;-</span> <span class="fu">Streamline</span>(rs)</span></code></pre></div>
+<div class="sourceCode" id="cb16"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb16-1"><a href="#cb16-1" tabindex="-1"></a>       rs <span class="ot">&lt;-</span> <span class="fu">Rborist</span>(x, y)</span>
+<span id="cb16-2"><a href="#cb16-2" tabindex="-1"></a>       ...</span>
+<span id="cb16-3"><a href="#cb16-3" tabindex="-1"></a>       rs <span class="ot">&lt;-</span> <span class="fu">Streamline</span>(rs)</span></code></pre></div>
 </div>
 <div id="sampling-options" class="section level2">
 <h2>Sampling options</h2>
@@ -549,12 +557,12 @@ with replacement.</p>
 <p>Vector <em>rowWeight</em> weights the probability of bagging a given
 row. The following invocation gives each row identical weight, which is
 also the default behavior:</p>
-<div class="sourceCode" id="cb17"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb17-1"><a href="#cb17-1" aria-hidden="true" tabindex="-1"></a>       rs <span class="ot">&lt;-</span> <span class="fu">Rborist</span>(x, y, <span class="at">rowWeight =</span> <span class="fu">rep</span>(<span class="dv">1</span><span class="sc">/</span><span class="fu">nrow</span>(y), <span class="fu">nrow</span>(y))</span></code></pre></div>
+<div class="sourceCode" id="cb17"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb17-1"><a href="#cb17-1" tabindex="-1"></a>       rs <span class="ot">&lt;-</span> <span class="fu">Rborist</span>(x, y, <span class="at">rowWeight =</span> <span class="fu">rep</span>(<span class="dv">1</span><span class="sc">/</span><span class="fu">nrow</span>(y), <span class="fu">nrow</span>(y))</span></code></pre></div>
 <p>Vector <em>predWeight</em> weights the probability of selecting a
 given predictor as splitting candidate. For example, this invocation
 selects predictor 0 half as often, per predictor, as the remaining
 predictors:</p>
-<div class="sourceCode" id="cb18"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb18-1"><a href="#cb18-1" aria-hidden="true" tabindex="-1"></a>       rs <span class="ot">&lt;-</span> <span class="fu">Rborist</span>(x, y, <span class="at">predWeight =</span> <span class="fu">c</span>(<span class="fl">0.5</span>, <span class="fu">rep</span>(<span class="fl">1.0</span>, <span class="fu">ncol</span>(x)<span class="sc">-</span><span class="dv">1</span>)))</span></code></pre></div>
+<div class="sourceCode" id="cb18"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb18-1"><a href="#cb18-1" tabindex="-1"></a>       rs <span class="ot">&lt;-</span> <span class="fu">Rborist</span>(x, y, <span class="at">predWeight =</span> <span class="fu">c</span>(<span class="fl">0.5</span>, <span class="fu">rep</span>(<span class="fl">1.0</span>, <span class="fu">ncol</span>(x)<span class="sc">-</span><span class="dv">1</span>)))</span></code></pre></div>
 <p>Option <em>predProb</em> is the uniform probability of selecting a
 predictor for splitting. That is, the value applies uniformly to all
 predictors. Hence the number of predictors tried at a given split will
@@ -572,7 +580,7 @@ indicates that no monotonicity constraint is enforced. Values assigned
 to factor predictors are ignored.</p>
 <p>The following example rejects nonincreasing predictors as splitting
 candidates with probability one:</p>
-<div class="sourceCode" id="cb19"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb19-1"><a href="#cb19-1" aria-hidden="true" tabindex="-1"></a>       rs <span class="ot">&lt;-</span> <span class="fu">Rborist</span>(x, y, <span class="at">regMono =</span> <span class="fu">rep</span>(<span class="fl">1.0</span>, <span class="fu">ncol</span>(x)))</span></code></pre></div>
+<div class="sourceCode" id="cb19"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb19-1"><a href="#cb19-1" tabindex="-1"></a>       rs <span class="ot">&lt;-</span> <span class="fu">Rborist</span>(x, y, <span class="at">regMono =</span> <span class="fu">rep</span>(<span class="fl">1.0</span>, <span class="fu">ncol</span>(x)))</span></code></pre></div>
 </div>
 <div id="other-training-options" class="section level2">
 <h2>Other training options</h2>
@@ -584,8 +592,8 @@ unbalanced.</p>
 <p>The following example employs a non-normalized weighting vector to
 give the first category twice as much weight as the others. Note that
 the category ecoding reflected by ‘levels()’ is not portable:</p>
-<div class="sourceCode" id="cb20"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb20-1"><a href="#cb20-1" aria-hidden="true" tabindex="-1"></a>       lv <span class="ot">&lt;-</span> <span class="fu">levels</span>(y)</span>
-<span id="cb20-2"><a href="#cb20-2" aria-hidden="true" tabindex="-1"></a>       rs <span class="ot">&lt;-</span> <span class="fu">Rborist</span>(x, y, <span class="at">classWeight =</span> <span class="fu">c</span>(<span class="fl">2.0</span>, <span class="fu">rep</span>(<span class="fl">1.0</span>, <span class="fu">length</span>(lv) <span class="sc">-</span> <span class="dv">1</span>))</span></code></pre></div>
+<div class="sourceCode" id="cb20"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb20-1"><a href="#cb20-1" tabindex="-1"></a>       lv <span class="ot">&lt;-</span> <span class="fu">levels</span>(y)</span>
+<span id="cb20-2"><a href="#cb20-2" tabindex="-1"></a>       rs <span class="ot">&lt;-</span> <span class="fu">Rborist</span>(x, y, <span class="at">classWeight =</span> <span class="fu">c</span>(<span class="fl">2.0</span>, <span class="fu">rep</span>(<span class="fl">1.0</span>, <span class="fu">length</span>(lv) <span class="sc">-</span> <span class="dv">1</span>))</span></code></pre></div>
 <p>By default, when a numerical predictor is chosen to split a node, the
 Arborist assigns its split value as that corresponding to the mean rank,
 with respect to the <em>full</em> set of observations on the predictor,
@@ -601,10 +609,10 @@ interpolated, so that the split value can be manipulated more finely
 with respect to the two endpoints. For example, the following codelet
 expresses the default behavior, which is to select the middle rank
 (i.e., 0.5 quantile) for all numerical predictors (if any):</p>
-<div class="sourceCode" id="cb21"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb21-1"><a href="#cb21-1" aria-hidden="true" tabindex="-1"></a>       rs <span class="ot">&lt;-</span> <span class="fu">Rborist</span>(x, y, <span class="at">splitQuant =</span> <span class="fu">rep</span>(<span class="fl">0.5</span>, <span class="fu">ncol</span>(x)))</span></code></pre></div>
+<div class="sourceCode" id="cb21"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb21-1"><a href="#cb21-1" tabindex="-1"></a>       rs <span class="ot">&lt;-</span> <span class="fu">Rborist</span>(x, y, <span class="at">splitQuant =</span> <span class="fu">rep</span>(<span class="fl">0.5</span>, <span class="fu">ncol</span>(x)))</span></code></pre></div>
 <p>Similarly, this example chooses the left endpoint for all relevant
 predictors:</p>
-<div class="sourceCode" id="cb22"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb22-1"><a href="#cb22-1" aria-hidden="true" tabindex="-1"></a>       rs <span class="ot">&lt;-</span> <span class="fu">Rborist</span>(x, y, <span class="at">splitQuant =</span> <span class="fu">rep</span>(<span class="fl">0.0</span>, <span class="fu">ncol</span>(x)))</span></code></pre></div>
+<div class="sourceCode" id="cb22"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb22-1"><a href="#cb22-1" tabindex="-1"></a>       rs <span class="ot">&lt;-</span> <span class="fu">Rborist</span>(x, y, <span class="at">splitQuant =</span> <span class="fu">rep</span>(<span class="fl">0.0</span>, <span class="fu">ncol</span>(x)))</span></code></pre></div>
 </div>
 </div>
 <div id="preformatting" class="section level1">
@@ -613,8 +621,8 @@ predictors:</p>
 streamlined for subsequent training. A “preformatted” representation of
 the training data can be generated directly and trained separately as
 follows:</p>
-<div class="sourceCode" id="cb23"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb23-1"><a href="#cb23-1" aria-hidden="true" tabindex="-1"></a>       pf <span class="ot">&lt;-</span> <span class="fu">Preformat</span>(x)</span>
-<span id="cb23-2"><a href="#cb23-2" aria-hidden="true" tabindex="-1"></a>       rs <span class="ot">&lt;-</span> <span class="fu">Rborist</span>(pf, y)</span></code></pre></div>
+<div class="sourceCode" id="cb23"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb23-1"><a href="#cb23-1" tabindex="-1"></a>       pf <span class="ot">&lt;-</span> <span class="fu">Preformat</span>(x)</span>
+<span id="cb23-2"><a href="#cb23-2" tabindex="-1"></a>       rs <span class="ot">&lt;-</span> <span class="fu">Rborist</span>(pf, y)</span></code></pre></div>
 <p>Separate preformatting can result in a slight performance improvement
 in workflows with iterated training, such as under <em>Caret</em>. This
 is simply because the sorting and packing performed at the start of
@@ -626,9 +634,9 @@ observation values. As the Arborist is able to identify and compress
 repetitive observations, storage might be conserved by first
 preformatting <em>B</em>, then deleting it and finally training on the
 preformatted representation:</p>
-<div class="sourceCode" id="cb24"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb24-1"><a href="#cb24-1" aria-hidden="true" tabindex="-1"></a>       pf <span class="ot">&lt;-</span> <span class="fu">Preformat</span>(B)</span>
-<span id="cb24-2"><a href="#cb24-2" aria-hidden="true" tabindex="-1"></a>       <span class="fu">rm</span>(B)</span>
-<span id="cb24-3"><a href="#cb24-3" aria-hidden="true" tabindex="-1"></a>       rs <span class="ot">&lt;-</span> <span class="fu">Rborist</span>(pf, y)</span></code></pre></div>
+<div class="sourceCode" id="cb24"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb24-1"><a href="#cb24-1" tabindex="-1"></a>       pf <span class="ot">&lt;-</span> <span class="fu">Preformat</span>(B)</span>
+<span id="cb24-2"><a href="#cb24-2" tabindex="-1"></a>       <span class="fu">rm</span>(B)</span>
+<span id="cb24-3"><a href="#cb24-3" tabindex="-1"></a>       rs <span class="ot">&lt;-</span> <span class="fu">Rborist</span>(pf, y)</span></code></pre></div>
 </div>
 <div id="performance" class="section level1">
 <h1>Performance</h1>

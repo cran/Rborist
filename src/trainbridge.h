@@ -38,13 +38,6 @@ struct TrainBridge {
     return frame.get();
   }
 
-  
-  /**
-     @brief Copies internal-to-external predictor map.
-
-     @return copy of frame's predMap.
-   */
-  vector<unsigned int> getPredMap() const;
 
   /**
      @brief Invokes DecNode's static initializer.
@@ -106,14 +99,6 @@ struct TrainBridge {
   static void initNodeScorer(const string& scorer);
 
 
-  /**
-     @brief Initializes static OMP thread state.
-
-     @param nThread is a user-specified thread request.
-   */
-  static void initOmp(unsigned int nThread);
-
-  
   /**
      @brief Registers parameters governing splitting.
      

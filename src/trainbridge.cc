@@ -25,12 +25,6 @@ TrainBridge::TrainBridge(unique_ptr<RLEFrame> rleFrame, double autoCompress, boo
 TrainBridge::~TrainBridge() = default;
 
 
-vector<PredictorT> TrainBridge::getPredMap() const {
-  vector<PredictorT> predMap(frame->getPredMap());
-  return predMap;
-}
-
-
 void TrainBridge::init(unsigned int nPred) {
   FETrain::initDecNode(nPred);
 }
@@ -86,11 +80,6 @@ void TrainBridge::getScoreDesc(double& nu,
 
 void TrainBridge::initNodeScorer(const string& scorer) {
   FETrain::initNodeScorer(scorer);
-}
-
-
-void TrainBridge::initOmp(unsigned int nThread) {
-  FETrain::initOmp(nThread);
 }
 
 

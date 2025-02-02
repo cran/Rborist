@@ -1,4 +1,4 @@
-# Copyright (C)  2012-2024   Mark Seligman
+# Copyright (C)  2012-2025   Mark Seligman
 ##
 ## This file is part of ArboristR.
 ##
@@ -22,6 +22,7 @@ preformat <- function(x, ...) UseMethod("preformat")
 
 
 preformat.default <- function(x,
+			      nThread = 0,
                               verbose = FALSE,
                               ...) {
     if (inherits(x, "Deframe")) {
@@ -39,7 +40,7 @@ preformat.default <- function(x,
         if (verbose)
             print("Pre-sorting")
 
-        preformat <- deframe(x)
+        preformat <- deframe(x, nThread=nThread)
         if (verbose)
             print("Pre-formatting completed")
     }

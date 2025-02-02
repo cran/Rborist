@@ -41,7 +41,9 @@ class Sampler {
 
   const unsigned int nRep;
   const size_t nObs; ///< # training observations
-  const vector<size_t> holdout; ///< Withheld indices; ordered.
+  const vector<size_t> unobserved; ///< Indices of unobserved values.
+  const vector<size_t> holdout; ///< Withheld indices, from specification.
+  const vector<size_t> noSample; ///< Sorted indices not to sample.
 
   // Presampling only:
   bool replace; ///< Whether sampling with replacement.
@@ -50,7 +52,7 @@ class Sampler {
   const size_t nSamp;  ///< # samples per repitition.
   bool trivial; ///< Shortcut.  NYI
   vector<SamplerNux> sbCresc; ///< Crescent block.
-  unique_ptr<Sample::Walker<size_t>> walker; ///< Walker table.
+  unique_ptr<Sample<size_t>::Walker> walker; ///< Walker table.
 
   const unique_ptr<Response> response;
   const vector<vector<SamplerNux>> samples;
@@ -105,6 +107,7 @@ public:
 	  bool replace_,
 	  const vector<double>& weight,
 	  size_t nHoldout,
+	  unsigned int nFold,
 	  const vector<size_t>& undefined);
 
 
@@ -293,11 +296,26 @@ public:
 
 
   /**
-     @return sorted vector of held-out and undefined indices.
+     @param nObs is the number of observations.
+
+     @param nHoldout is the specified number of indices to choose.
+     
+     @param unobserved are indices not to be chosen.
+     
+     @return vector of held-out indices.
    */
   static vector<size_t> makeHoldout(size_t nObs,
 				    size_t nHoldout,
-				    const vector<size_t>& undefined);
+				    const vector<size_t>& unobserved);
+
+
+  /**
+     @return sorted vector of held-out and unobserved indices.
+   */
+  static vector<size_t> makeNoSample(const vector<size_t>& unobserved,
+				     const vector<size_t>& holdout);
+
+
   
   /**
      @brief Normalizes probability vector and zeroes held-out indices.
