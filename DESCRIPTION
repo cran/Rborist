@@ -1,8 +1,8 @@
 Package: Rborist
 Title: Extensible, Parallelizable Implementation of the Random Forest
         Algorithm
-Version: 0.3-11
-Date: 2025-2-2
+Version: 0.3-12
+Date: 2026-9-6
 Authors@R: person(given = "Mark",
                    family = "Seligman",
 		   role = c("aut", "cre"),
@@ -20,7 +20,7 @@ Suggests: testthat, knitr, rmarkdown, markdown
 VignetteBuilder: knitr
 LinkingTo: Rcpp
 NeedsCompilation: yes
-Packaged: 2025-02-02 20:41:06 UTC; mseligman
+Packaged: 2026-09-06 22:41:15 UTC; mseligman
 Author: Mark Seligman [aut, cre]
 Repository: CRAN
-Date/Publication: 2025-02-02 23:10:16 UTC
+Date/Publication: 2026-09-07 07:00:10 UTC

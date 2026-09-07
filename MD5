@@ -1,4 +1,4 @@
-02f67728319a9e977062b6b38eb7a480 *DESCRIPTION
+e7ddf0ddeba5d0dac8cf1f6a5c2a031e *DESCRIPTION
 aeed2599b93947d261d7cedbf7fb37bd *LICENSE
 be614e77c314c207d4d148b2aabc32e0 *NAMESPACE
 8857a0f6e297296a918604f58c635c16 *R/Export.R
@@ -17,11 +17,11 @@ a3c725ae668686c48a758567af02600d *R/presample.R
 60caf99c7fd33d4cd6fd94674537e559 *R/rfTrain.R
 ca72e0b645cbdc02769feacd0e3c5bff *R/validate.R
 405a5f437606e13e6ef4eddcc2a9e712 *R/zzz.R
-6b0c22aba6e65fabd7d916123509088c *build/vignette.rds
+eb0b72ea7dcaa4de21b4d88e53bd3b5b *build/vignette.rds
 2a696488a0540f412e7288df0443c30f *inst/NEWS
 d919fba54ecce1b3978d625f9b89b5d1 *inst/doc/rborist.R
 f03d1118b4cefe4ce55d5366e010e869 *inst/doc/rborist.Rmd
-5259ee1ae42e752ad45f77bb8224513f *inst/doc/rborist.html
+4d9984c6969807588a9737d95d00b1f9 *inst/doc/rborist.html
 cd75649539bd576e8b177886ad0733fa *man/Export.Rd
 efacda69dd7d20ab40c602e86c9601eb *man/Rborist.Rd
 643045ed8fd70fe58cb115fe1fe030ea *man/RboristNews.Rd
@@ -42,7 +42,7 @@ b37ef21029bcde1dd2c21c672c4d5eb9 *src/Makevars.win
 c97bdd4d4bf83fdea06ae059e2828959 *src/algparam.h
 88de95518a9cf5f80e7d297fd594079a *src/algsf.h
 ed9ed20767b9e768b2315eced3ca9b89 *src/bheap.h
-136aad33181facfb732612515e80ff22 *src/block.h
+bdb7b394726fcb17cc8d17cf6f06b484 *src/block.h
 b56f2df2544abc39200e3d5a5b456f70 *src/booster.cc
 11748fc0bb863ad4f0db767c4bd718e1 *src/booster.h
 e6fff35e63800ecae1bba5a43e540f82 *src/branchsense.cc
@@ -58,8 +58,8 @@ ed23a4d1c7c56f46687493db38f47304 *src/cartnode.h
 1b1420ba6994af9795027c5d7883bb7c *src/coproc.cc
 0e56b1f7c9d95359a6a996b5205ee79f *src/coproc.h
 3c0a771f206320e0083ff0e827d58d4d *src/coproclayout.cc
-0dc65b175ed019d9b17ea449d334f73a *src/coreR.cc
-ec2a2e666bc672c29f9e6cb2a52def8d *src/coreR.h
+c323421c0625f40b208571d6ef3e0414 *src/coreR.cc
+720407c8604babfc5042e88ae29f9a3d *src/coreR.h
 ffaee591a6f39b9dbce4a35b6edd4479 *src/corebridge.cc
 e61e9a2be591a46f9b23db3eabe3b5a6 *src/corebridge.h
 186923326881da6408aa2ad2e8d90343 *src/crit.cc
@@ -73,7 +73,7 @@ f19707b7ddd0dbba09c0c04842638792 *src/cutaccumcart.h
 781771789d82ca51dc5e28b3f274c70c *src/cutfrontier.cc
 02bbf80a9f42adddd1d8b86e303aebbe *src/cutfrontier.h
 01a09cfa5cd80293a6d12061e9ec568f *src/decnode.h
-97e55e0e4273a7fb96601d259acb2760 *src/dectree.cc
+cb6d618feb0a37214b9cce4127a5a526 *src/dectree.cc
 a73d304a4f92317f10d356fc144c5ced *src/dectree.h
 3b5a4a2cc964d1c5b392af2a8300a4d6 *src/deframe.cc
 bb7d82f0b84bf54ee693a34c3ce3a6ae *src/deframe.h
@@ -98,7 +98,7 @@ cea9372d5a299fa6108a57d2a6511ccb *src/forestWeightR.cc
 801cde57e440a9594d1b6a8fd149ab16 *src/frontier.cc
 8769c0cbd438b1907c379a6796a460f5 *src/frontier.h
 d30f19ca8d193e4871dc2f635bd60902 *src/grove.cc
-99b275ea4267c7dae96109422f58478a *src/grove.h
+6c7b1504c51b608058d2c7f809a70fdb *src/grove.h
 c9527bfa0897bdac6770fdaedf85482f *src/grovebridge.cc
 d83a06db8de7c03731809b7cb2f6bf7b *src/grovebridge.h
 20ae39edfaddaa09bf297f7d4e445700 *src/idcount.h
